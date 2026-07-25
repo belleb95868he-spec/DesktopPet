@@ -94,6 +94,7 @@ class ActivityTriggerManager(QObject):
 
         if app is not None:
             app.installEventFilter(self)
+            print("[ActivityTriggerManager] Installed event filter on QApplication")
 
     def _can_trigger(self, key):
         last = self.last_triggered.get(key)
@@ -128,6 +129,12 @@ class ActivityTriggerManager(QObject):
             except Exception:
                 procs = []
 
+        # 调试输出：已读取到的进程数
+        try:
+            print(f"[ActivityTriggerManager] polled processes: {len(procs)}")
+        except Exception:
+            pass
+
         # 对每个映射项检测是否存在进程
         for key, names, message in self.process_map:
             found = False
@@ -145,19 +152,24 @@ class ActivityTriggerManager(QObject):
                     break
 
             if found and self._can_trigger(key):
+                print(f"[ActivityTriggerManager] trigger process {key} -> {message}")
                 self.dialogue_manager.show_message(message)
                 self._mark_triggered(key)
 
         # 检查浏览器中是否有 YouTube 标签
         try:
-            if self._has_youtube_tab():
+            has_yt = self._has_youtube_tab()
+            print(f"[ActivityTriggerManager] has_youtube_tab: {has_yt}")
+            if has_yt:
                 if self._can_trigger("youtube"):
                     import random
 
                     msg = random.choice(self.youtube_messages)
+                    print(f"[ActivityTriggerManager] trigger youtube -> {msg}")
                     self.dialogue_manager.show_message(msg)
                     self._mark_triggered("youtube")
-        except Exception:
+        except Exception as e:
+            print(f"[ActivityTriggerManager] _has_youtube_tab error: {e}")
             pass
 
         # 检查 Chrome 标签数是否超过 10
