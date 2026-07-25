@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from animation_manager import AnimationManager
 from dialogue import DialogueManager
 from hourly_greetings import HourlyGreetingManager
+from activity_triggers import ActivityTriggerManager
 from petting_manager import PettingManager
 from status_manager import StatusManager
 
@@ -72,6 +73,12 @@ class DesktopPet(QWidget):
 
         # UI 创建完成后，再启动整点问候
         self.hourly_greeting_manager = HourlyGreetingManager(
+            pet=self,
+            dialogue_manager=self.dialogue_manager,
+        )
+
+        # 活动触发管理器（应用与系统行为触发对话框）
+        self.activity_trigger_manager = ActivityTriggerManager(
             pet=self,
             dialogue_manager=self.dialogue_manager,
         )

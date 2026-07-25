@@ -1,3 +1,5 @@
 PySide6
 
+psutil
+
 pip3 install -r requirements.txt

@@ -6,7 +6,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
 )
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 
 class SpeechBubble(QWidget):
@@ -16,14 +16,18 @@ class SpeechBubble(QWidget):
         super().__init__(None)
 
         self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.Tool
+            Qt.Window
+            | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
+            | Qt.Tool
         )
 
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # Ensure the system does not draw a default background for this window
+        # so the rounded bubble drawn in paintEvent is the only visible content.
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
 
         self.text_label = QLabel(self)
 
@@ -354,9 +358,14 @@ class DialogueManager:
 
         self.dialogue_label.show()
         self.dialogue_label.raise_()
+        self.dialogue_label.setWindowOpacity(1.0)
+        self.dialogue_label.setFocus(Qt.OtherFocusReason)
+        self.dialogue_label.activateWindow()
+        self.dialogue_label.setVisible(True)
 
         # 气泡宽度改变后重新计算位置
         self.update_position()
+        QApplication.processEvents()
 
         # 人物移动时持续更新位置
         self.follow_timer.start()
