@@ -173,6 +173,11 @@ class SpeechBubble(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        # Keep paintEvent as implemented below; this placeholder
+        # ensures any external calls land here when we instrument.
+        super().paintEvent(event)
+
+    def paintEvent(self, event):
         """绘制气泡框和三角形尾巴。"""
 
         painter = QPainter(self)
@@ -356,12 +361,17 @@ class DialogueManager:
             text
         )
 
+        print(f"[DialogueManager] show_message called: {text}")
+
         self.dialogue_label.show()
         self.dialogue_label.raise_()
         self.dialogue_label.setWindowOpacity(1.0)
         self.dialogue_label.setFocus(Qt.OtherFocusReason)
         self.dialogue_label.activateWindow()
         self.dialogue_label.setVisible(True)
+
+        # 再次延迟 raise 一次，帮助在其他应用为活动窗口时也能把气泡带到前台
+        QTimer.singleShot(50, lambda: (self.dialogue_label.raise_(), QApplication.processEvents(), print(f"[DialogueManager] bubble visible: {self.dialogue_label.isVisible()}")))
 
         # 气泡宽度改变后重新计算位置
         self.update_position()
