@@ -154,6 +154,14 @@ class ActivityTriggerManager(QObject):
             if found and self._can_trigger(key):
                 print(f"[ActivityTriggerManager] trigger process {key} -> {message}")
                 self.dialogue_manager.show_message(message)
+                # 立即打印气泡状态以便排查是否被遮挡或未显示
+                try:
+                    bubble = getattr(self.dialogue_manager, "dialogue_label", None)
+                    if bubble is not None:
+                        print(f"[ActivityTriggerManager] bubble.isVisible={bubble.isVisible()}, geom={bubble.geometry().getRect()}")
+                except Exception as e:
+                    print(f"[ActivityTriggerManager] bubble debug error: {e}")
+
                 self._mark_triggered(key)
 
         # 检查浏览器中是否有 YouTube 标签
@@ -210,8 +218,8 @@ class ActivityTriggerManager(QObject):
         if sys.platform != "darwin":
             return False
 
-        # 检查 Google Chrome
-        script = (
+        # 首先检查 Google Chrome
+        chrome_script = (
             'tell application "Google Chrome"\n'
             'repeat with w in windows\n'
             'repeat with t in tabs of w\n'
@@ -225,7 +233,29 @@ class ActivityTriggerManager(QObject):
         )
 
         try:
-            out = subprocess.check_output(["osascript", "-e", script], stderr=subprocess.DEVNULL)
+            out = subprocess.check_output(["osascript", "-e", chrome_script], stderr=subprocess.DEVNULL)
+            text = out.decode().strip().lower()
+            if text == "true":
+                return True
+        except Exception:
+            pass
+
+        # 回退检查 Safari（若使用 Safari 打开 YouTube）
+        safari_script = (
+            'tell application "Safari"\n'
+            'repeat with w in windows\n'
+            'repeat with t in tabs of w\n'
+            'if (URL of t) contains "youtube.com" then\n'
+            'return true\n'
+            'end if\n'
+            'end repeat\n'
+            'end repeat\n'
+            'return false\n'
+            'end tell'
+        )
+
+        try:
+            out = subprocess.check_output(["osascript", "-e", safari_script], stderr=subprocess.DEVNULL)
             text = out.decode().strip().lower()
             return text == "true"
         except Exception:
@@ -244,11 +274,18 @@ class ActivityTriggerManager(QObject):
     def eventFilter(self, watched, event):
         et = event.type()
 
+        # 忽略在宠物自身控件上的点击（宠物有自己的交互逻辑）
+        try:
+            if hasattr(self.pet, "pet_label") and watched is self.pet.pet_label:
+                return super().eventFilter(watched, event)
+        except Exception:
+            pass
+
         # 鼠标点击：更新最后输入时间，并对每次点击弹出无冷却气泡
         if et == QEvent.MouseButtonPress:
             self.last_input_time = time.time()
 
-            # 连续点击不受冷却限制，直接显示
+            # 连续点击不受冷却限制，直接显示（仅在非宠物区域）
             self.dialogue_manager.show_message(self.click_message)
 
         # 鼠标移动（用于检测快速拖动桌宠）
@@ -266,8 +303,24 @@ class ActivityTriggerManager(QObject):
                     self.dialogue_manager.show_message(self.drag_message)
                     self._mark_triggered("dragging")
 
-        # 键盘按键也计为用户输入
+
+        # 键盘按键也计为用户输入；检测短时间内狂按键盘触发
         if et == QEvent.KeyPress:
-            self.last_input_time = time.time()
+            t = time.time()
+            self.last_input_time = t
+
+            # 记录按键时间，用于检测快速输入（例如：1 秒内 >= 8 次）
+            if not hasattr(self, "_key_times"):
+                self._key_times = []
+
+            self._key_times.append(t)
+            # 丢弃 1 秒之前的记录
+            cutoff = t - 1.0
+            self._key_times = [x for x in self._key_times if x >= cutoff]
+
+            if len(self._key_times) >= 8:
+                if self._can_trigger("fast_typing"):
+                    self.dialogue_manager.show_message(self.click_message)
+                    self._mark_triggered("fast_typing")
 
         return super().eventFilter(watched, event)
