@@ -6,6 +6,13 @@ try:
     import psutil
 except Exception:
     psutil = None
+try:
+    import os
+    from pynput import mouse as _pynput_mouse
+    from pynput import keyboard as _pynput_keyboard
+except Exception:
+    _pynput_mouse = None
+    _pynput_keyboard = None
 
 from PySide6.QtCore import QObject, QTimer, QEvent
 
@@ -95,6 +102,19 @@ class ActivityTriggerManager(QObject):
         if app is not None:
             app.installEventFilter(self)
             print("[ActivityTriggerManager] Installed event filter on QApplication")
+
+        # 可选：全局钩子（系统任意位置的鼠标/键盘）
+        self.global_hooks_enabled = False
+        try:
+            if os.environ.get("DESKTOPPET_GLOBAL_HOOKS") == "1":
+                if _pynput_mouse and _pynput_keyboard:
+                    self._start_global_listeners()
+                    self.global_hooks_enabled = True
+                    print("[ActivityTriggerManager] Global input hooks enabled (pynput)")
+                else:
+                    print("[ActivityTriggerManager] pynput not available — global hooks disabled")
+        except Exception:
+            pass
 
     def _can_trigger(self, key):
         last = self.last_triggered.get(key)
@@ -190,6 +210,53 @@ class ActivityTriggerManager(QObject):
                     self._mark_triggered("many_tabs")
         except Exception:
             pass
+
+    # ------------------ 全局监听 ------------------
+    def _start_global_listeners(self):
+        try:
+            # 鼠标点击回调
+            def _on_click(x, y, button, pressed):
+                # 只在按下时触发
+                if not pressed:
+                    return
+
+                # 忽略在 pet_label 区域内的点击
+                try:
+                    if hasattr(self.pet, "pet_label"):
+                        geo = self.pet.pet_label.geometry()
+                        top_left = self.pet.pet_label.mapToGlobal(QPoint(0, 0))
+                        gx, gy = top_left.x(), top_left.y()
+                        if gx <= x <= gx + geo.width() and gy <= y <= gy + geo.height():
+                            return
+                except Exception:
+                    pass
+
+                # 连续点击没有冷却，直接显示
+                print(f"[ActivityTriggerManager] global click at ({x},{y}) -> show click message")
+                self.dialogue_manager.show_message(self.click_message)
+
+            # 键盘回调（快速敲击检测）
+            def _on_press(key):
+                t = time.time()
+                if not hasattr(self, "_global_key_times"):
+                    self._global_key_times = []
+                self._global_key_times.append(t)
+                cutoff = t - 1.0
+                self._global_key_times = [x for x in self._global_key_times if x >= cutoff]
+                if len(self._global_key_times) >= 8:
+                    if self._can_trigger("fast_typing"):
+                        print("[ActivityTriggerManager] global fast typing detected -> trigger")
+                        self.dialogue_manager.show_message(self.click_message)
+                        self._mark_triggered("fast_typing")
+
+            # 启动监听器
+            self._mouse_listener = _pynput_mouse.Listener(on_click=_on_click)
+            self._keyboard_listener = _pynput_keyboard.Listener(on_press=_on_press)
+
+            self._mouse_listener.start()
+            self._keyboard_listener.start()
+        except Exception as e:
+            print(f"[ActivityTriggerManager] failed to start global listeners: {e}")
 
     def _get_chrome_tab_count(self):
         """尝试通过 AppleScript 读取 Google Chrome 的所有标签页数（macOS）。"""
