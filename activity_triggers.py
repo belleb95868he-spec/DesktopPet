@@ -14,7 +14,8 @@ except Exception:
     _pynput_mouse = None
     _pynput_keyboard = None
 
-from PySide6.QtCore import QObject, QTimer, QEvent
+from PySide6.QtCore import QObject, QTimer, QEvent, QPoint
+import multiprocessing
 
 
 class ActivityTriggerManager(QObject):
@@ -105,14 +106,24 @@ class ActivityTriggerManager(QObject):
 
         # 可选：全局钩子（系统任意位置的鼠标/键盘）
         self.global_hooks_enabled = False
+        self._global_proc = None
+        self._global_conn = None
         try:
             if os.environ.get("DESKTOPPET_GLOBAL_HOOKS") == "1":
-                if _pynput_mouse and _pynput_keyboard:
-                    self._start_global_listeners()
+                # spawn a separate process running global_hooks_worker.run(conn)
+                try:
+                    from global_hooks_worker import run as _worker_run
+
+                    parent_conn, child_conn = multiprocessing.Pipe()
+                    proc = multiprocessing.Process(target=_worker_run, args=(child_conn,))
+                    proc.daemon = True
+                    proc.start()
+                    self._global_proc = proc
+                    self._global_conn = parent_conn
                     self.global_hooks_enabled = True
-                    print("[ActivityTriggerManager] Global input hooks enabled (pynput)")
-                else:
-                    print("[ActivityTriggerManager] pynput not available — global hooks disabled")
+                    print("[ActivityTriggerManager] Global input hooks enabled (worker process)")
+                except Exception as e:
+                    print(f"[ActivityTriggerManager] failed to start global hooks worker: {e}")
         except Exception:
             pass
 
@@ -208,6 +219,44 @@ class ActivityTriggerManager(QObject):
                 if self._can_trigger("many_tabs"):
                     self.dialogue_manager.show_message("你今天很忙吗？")
                     self._mark_triggered("many_tabs")
+        except Exception:
+            pass
+
+        # 读取来自全局钩子子进程的事件
+        try:
+            if self._global_conn and self._global_conn.poll():
+                msg = self._global_conn.recv()
+                if isinstance(msg, tuple) and len(msg) >= 1:
+                    ev = msg[0]
+                    if ev == "click":
+                        x, y = msg[1]
+                        # 忽略点击在宠物头像区域
+                        try:
+                            if hasattr(self.pet, "pet_label"):
+                                geo = self.pet.pet_label.geometry()
+                                top_left = self.pet.pet_label.mapToGlobal(QPoint(0, 0))
+                                gx, gy = top_left.x(), top_left.y()
+                                if gx <= x <= gx + geo.width() and gy <= y <= gy + geo.height():
+                                    return
+                        except Exception:
+                            pass
+
+                        print(f"[ActivityTriggerManager] global click received at ({x},{y})")
+                        self.dialogue_manager.show_message(self.click_message)
+                    elif ev == "key":
+                        t = time.time()
+                        if not hasattr(self, "_global_key_times"):
+                            self._global_key_times = []
+                        self._global_key_times.append(t)
+                        cutoff = t - 1.0
+                        self._global_key_times = [x for x in self._global_key_times if x >= cutoff]
+                        if len(self._global_key_times) >= 8:
+                            if self._can_trigger("fast_typing"):
+                                print("[ActivityTriggerManager] global fast typing -> trigger")
+                                self.dialogue_manager.show_message(self.click_message)
+                                self._mark_triggered("fast_typing")
+                    elif ev == "error":
+                        print(f"[ActivityTriggerManager] global worker error: {msg[1]}")
         except Exception:
             pass
 
