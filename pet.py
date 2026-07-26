@@ -1,8 +1,9 @@
+import math
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QEvent, Qt
-from PySide6.QtGui import QAction, QGuiApplication
+from PySide6.QtCore import QPoint, QEvent, Qt, QTimer
+from PySide6.QtGui import QAction, QGuiApplication, QPixmap, QTransform, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -17,7 +18,6 @@ from PySide6.QtWidgets import (
 from animation_manager import AnimationManager
 from dialogue import DialogueManager
 from hourly_greetings import HourlyGreetingManager
-from activity_triggers import ActivityTriggerManager
 from petting_manager import PettingManager
 from status_manager import StatusManager
 
@@ -43,6 +43,16 @@ class DesktopPet(QWidget):
         self.drag_start_global = QPoint()
         self.window_start_position = QPoint()
         self.is_dragging = False
+        self.lifted_pixmap = None
+        self.drag_anchor_window = QPoint()
+        self.drag_pivot = QPoint()
+        self.drag_label_x = 0
+        self.drag_swing_phase = 0.0
+        self.drag_swing_amplitude = 5
+        self.drag_swing_speed = 2.5
+        self.drag_timer = QTimer(self)
+        self.drag_timer.setInterval(16)
+        self.drag_timer.timeout.connect(self.update_drag_swing)
 
         # ==================================================
         # 功能管理器
@@ -73,12 +83,6 @@ class DesktopPet(QWidget):
 
         # UI 创建完成后，再启动整点问候
         self.hourly_greeting_manager = HourlyGreetingManager(
-            pet=self,
-            dialogue_manager=self.dialogue_manager,
-        )
-
-        # 活动触发管理器（应用与系统行为触发对话框）
-        self.activity_trigger_manager = ActivityTriggerManager(
             pet=self,
             dialogue_manager=self.dialogue_manager,
         )
@@ -159,6 +163,8 @@ class DesktopPet(QWidget):
             self.pet_label,
             alignment=Qt.AlignCenter,
         )
+
+        self.lifted_pixmap = self.load_lifted_pixmap()
 
         # ==================================================
         # 状态面板
@@ -348,6 +354,7 @@ class DesktopPet(QWidget):
         )
 
         self.adjustSize()
+        self.update_drag_anchor_window()
 
     # ==================================================
     # 鼠标与菜单
@@ -396,13 +403,19 @@ class DesktopPet(QWidget):
                     )
 
                     if movement.manhattanLength() > 5:
-                        self.is_dragging = True
+                        if not self.is_dragging:
+                            self.is_dragging = True
+                            self.start_drag()
 
                     if self.is_dragging:
-                        self.move(
-                            self.window_start_position
-                            + movement
+                        self.current_drag_global = current_global
+                        self.move_drag_anchor_to_mouse(
+                            self.current_drag_global
                         )
+                        if not self.drag_timer.isActive():
+                            self.drag_timer.start()
+                        if hasattr(self, "activity_trigger_manager"):
+                            self.activity_trigger_manager._register_drag_motion()
 
                     event.accept()
 
@@ -410,7 +423,14 @@ class DesktopPet(QWidget):
 
             elif event.type() == QEvent.MouseButtonRelease:
                 if event.button() == Qt.LeftButton:
-                    if not self.is_dragging:
+                    if self.is_dragging:
+                        self.drag_timer.stop()
+                        self.drag_swing_phase = 0.0
+                        self.move_drag_anchor_to_mouse(
+                            self.current_drag_global
+                        )
+                        self.stop_drag()
+                    else:
                         local_position = (
                             event.position().toPoint()
                         )
@@ -431,6 +451,109 @@ class DesktopPet(QWidget):
         return super().eventFilter(
             watched,
             event,
+        )
+
+    def start_drag(self):
+        self.animation_manager.pause_for_drag()
+        if self.lifted_pixmap is not None:
+            rotated = self.render_rotated_lifted_pixmap(0.0)
+            self.pet_label.setPixmap(rotated)
+            self.pet_label.update()
+
+    def stop_drag(self):
+        self.animation_manager.resume_idle()
+
+    def update_drag_swing(self):
+        if not self.is_dragging:
+            self.drag_timer.stop()
+            return
+
+        self.drag_swing_phase += (
+            self.drag_swing_speed
+            * self.drag_timer.interval()
+            / 1000.0
+        )
+        angle = (
+            self.drag_swing_amplitude
+            * math.sin(self.drag_swing_phase)
+        )
+        if self.lifted_pixmap is not None:
+            rotated = self.render_rotated_lifted_pixmap(angle)
+            self.pet_label.setPixmap(rotated)
+            self.pet_label.update()
+
+    def render_rotated_lifted_pixmap(self, angle: float):
+        if self.lifted_pixmap is None:
+            return self.animation_manager.idle_frames[0]
+
+        canvas = QPixmap(self.pet_size, self.pet_size)
+        canvas.fill(Qt.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        transform = QTransform()
+        transform.translate(
+            self.drag_pivot.x(),
+            self.drag_pivot.y(),
+        )
+        transform.rotate(angle)
+        transform.translate(
+            -self.drag_pivot.x(),
+            -self.drag_pivot.y(),
+        )
+        painter.setTransform(transform)
+        painter.drawPixmap(self.drag_label_x, 0, self.lifted_pixmap)
+        painter.end()
+
+        return canvas
+
+    def load_lifted_pixmap(self):
+        lifted_path = self.base_path / "assets" / "lifted" / "lifted.png"
+        pixmap = QPixmap(str(lifted_path))
+        if pixmap.isNull():
+            print(f"无法读取 lifted 图像：{lifted_path}")
+            return None
+
+        scaled = pixmap.scaled(
+            self.pet_size,
+            self.pet_size,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+
+        pivot = QPoint(
+            round(scaled.width() * 603 / pixmap.width()),
+            round(scaled.height() * 150 / pixmap.height()),
+        )
+        self.drag_label_x = (
+            self.pet_size - scaled.width()
+        ) // 2
+        self.drag_pivot = QPoint(
+            self.drag_label_x + pivot.x(),
+            pivot.y(),
+        )
+        self.update_drag_anchor_window()
+
+        return scaled
+
+    def update_drag_anchor_window(self):
+        if not hasattr(self, "pet_label"):
+            return
+        label_pos = self.pet_label.pos()
+        self.drag_anchor_window = QPoint(
+            label_pos.x() + self.drag_pivot.x(),
+            label_pos.y() + self.drag_pivot.y(),
+        )
+
+    def move_drag_anchor_to_mouse(self, mouse_global_position):
+        """按红点当前的真实屏幕坐标移动窗口，使其与鼠标重合。"""
+        anchor_global_position = self.pet_label.mapToGlobal(
+            self.drag_pivot
+        )
+        self.move(
+            self.pos()
+            + mouse_global_position
+            - anchor_global_position
         )
 
     def toggle_status_panel(self):
@@ -545,4 +668,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-

@@ -68,6 +68,8 @@ class AnimationManager:
         self.action_timer.setSingleShot(True)
         self.action_timer.timeout.connect(self.choose_next_action)
 
+        self.saved_state = None
+
         self.walk_distance_per_cycle = 95.0
         self.walk_move_per_frame = (
             self.walk_distance_per_cycle / max(1, len(self.walk_frames))
@@ -272,6 +274,26 @@ class AnimationManager:
         self.current_state = "idle"
         self.last_action = "sing"
         self.idle_index = 0
+        self.sing_index = 0
+        if self.idle_frames:
+            self.pet.pet_label.setPixmap(self.idle_frames[0])
+        self.idle_timer.start(self.idle_interval)
+        self.schedule_next_action()
+
+    def pause_for_drag(self):
+        self.saved_state = self.current_state
+        self.idle_timer.stop()
+        self.blink_timer.stop()
+        self.walk_timer.stop()
+        self.sing_timer.stop()
+        self.action_timer.stop()
+
+    def resume_idle(self):
+        self.current_state = "idle"
+        self.last_action = "idle"
+        self.idle_index = 0
+        self.blink_index = 0
+        self.walk_index = 0
         self.sing_index = 0
         if self.idle_frames:
             self.pet.pet_label.setPixmap(self.idle_frames[0])
