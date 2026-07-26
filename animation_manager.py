@@ -1,5 +1,6 @@
 import random
 import re
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -11,10 +12,21 @@ from PySide6.QtGui import (
     QTransform,
 )
 
-WORK_ENTER_PROBABILITY = 0.20
+WORK_ENTER_PROBABILITY = 0.10
 WORK_DURATION_MS = 3 * 60 * 1000
 WORK_BLINK_INTERVAL_MS = 3000
 WORK_BLINK_FRAME_INTERVAL_MS = 100
+WORK_REWARD_COINS = 10
+IDLE_ENTER_PROBABILITY = 0.30
+BLINK_ENTER_PROBABILITY = 0.20
+WALK_ENTER_PROBABILITY = 0.30
+SING_ENTER_PROBABILITY = 0.10
+HUNGRY_ENTER_PROBABILITY = 0.40
+LOW_HUNGER_IDLE_PROBABILITY = 0.30
+LOW_HUNGER_BLINK_PROBABILITY = 0.30
+HUNGRY_THRESHOLD = 30
+HUNGRY_FRAME_INTERVAL_MS = 47
+HUNGRY_COOLDOWN_MS = 30 * 1000
 
 
 class AnimationManager:
@@ -71,9 +83,12 @@ class AnimationManager:
             self.idle_base_right = None
             self.idle_pupils_right = None
             self.idle_eye_mask_right = None
-        self.eye_tracking_radius = 450.0
+        self.eye_tracking_radius = 300.0
         self.eye_max_offset = 5.0
         self.eye_max_up_offset = 3.0
+        self.eye_smoothing_factor = 0.35
+        self.eye_current_offset_x = 0.0
+        self.eye_current_offset_y = 0.0
         self.blink_frames = self.load_animation_frames(
             self.base_path / "assets" / "blink", "blink_*.png"
         )
@@ -106,6 +121,17 @@ class AnimationManager:
             ]
         else:
             self.work_blink_sequence = []
+        self.hungry_frames_left = self.load_animation_frames(
+            self.base_path / "assets" / "hungry",
+            "hungry_*.png",
+        )
+        self.hungry_frames_right = [
+            frame.transformed(
+                QTransform().scale(-1, 1),
+                Qt.SmoothTransformation,
+            )
+            for frame in self.hungry_frames_left
+        ]
 
         self.idle_index = 0
         self.blink_index = 0
@@ -116,6 +142,7 @@ class AnimationManager:
         print(f"Blink 帧数：{len(self.blink_frames)}")
         print(f"Walk 帧数：{len(self.walk_frames)}")
         print(f"Sing 帧数：{len(self.sing_frames)}")
+        print(f"Hungry 帧数：{len(self.hungry_frames_left)}")
 
         self.idle_interval = 70
         self.blink_interval = 80
@@ -136,12 +163,18 @@ class AnimationManager:
         self.sing_timer.setTimerType(Qt.PreciseTimer)
         self.sing_timer.timeout.connect(self.play_sing_frame)
 
+        self.hungry_timer = QTimer(self.pet)
+        self.hungry_timer.setInterval(HUNGRY_FRAME_INTERVAL_MS)
+        self.hungry_timer.setTimerType(Qt.PreciseTimer)
+        self.hungry_timer.timeout.connect(self.play_hungry_frame)
+
         self.action_timer = QTimer(self.pet)
         self.action_timer.setSingleShot(True)
         self.action_timer.timeout.connect(self.choose_next_action)
 
         self.work_end_timer = QTimer(self.pet)
         self.work_end_timer.setSingleShot(True)
+        self.work_end_timer.setTimerType(Qt.PreciseTimer)
         self.work_end_timer.timeout.connect(self.finish_work)
 
         self.work_blink_interval_timer = QTimer(self.pet)
@@ -164,6 +197,11 @@ class AnimationManager:
         self.work_blink_playing = False
         self.work_entry_available = True
         self.idle_cycles_before_actions = 0
+        self.work_started_at = None
+        self.work_reward_claimed = False
+        self.hungry_index = 0
+        self.hungry_loops_remaining = 0
+        self.hungry_cooldown_until = 0.0
 
         self.saved_state = None
 
@@ -228,36 +266,86 @@ class AnimationManager:
         if self.current_state != "idle":
             return
 
-        if (
-            self.work_entry_available
-            and self.work_frame is not None
-            and self.work_blink_sequence
-            and random.random() < WORK_ENTER_PROBABILITY
-        ):
-            print("本次动作：Work")
-            self.start_work()
-            return
-
         roll = random.randint(1, 100)
         print(f"随机动作点数：{roll}")
 
-        if roll <= 30:
-            print("本次动作：Idle")
-            self.last_action = "idle"
-            self.schedule_next_action()
-        elif roll <= 40:
+        if self.pet.status_manager.hunger < HUNGRY_THRESHOLD:
+            hungry_available = (
+                bool(self.hungry_frames_left)
+                and time.monotonic() >= self.hungry_cooldown_until
+            )
+
+            if hungry_available:
+                hungry_limit = round(
+                    HUNGRY_ENTER_PROBABILITY * 100
+                )
+                low_hunger_idle_limit = hungry_limit + round(
+                    LOW_HUNGER_IDLE_PROBABILITY * 100
+                )
+                low_hunger_blink_limit = (
+                    low_hunger_idle_limit
+                    + round(LOW_HUNGER_BLINK_PROBABILITY * 100)
+                )
+                if roll <= hungry_limit:
+                    print("本次动作：Hungry")
+                    self.start_hungry()
+                elif roll <= low_hunger_idle_limit:
+                    self.choose_idle_action()
+                elif roll <= low_hunger_blink_limit:
+                    print("本次动作：Blink")
+                    self.start_blink()
+                else:
+                    self.choose_idle_action()
+            elif roll <= 50:
+                self.choose_idle_action()
+            else:
+                print("本次动作：Blink")
+                self.start_blink()
+            return
+
+        idle_limit = round(IDLE_ENTER_PROBABILITY * 100)
+        blink_limit = idle_limit + round(
+            BLINK_ENTER_PROBABILITY * 100
+        )
+        walk_limit = blink_limit + round(
+            WALK_ENTER_PROBABILITY * 100
+        )
+        sing_limit = walk_limit + round(
+            SING_ENTER_PROBABILITY * 100
+        )
+        work_limit = sing_limit + round(
+            WORK_ENTER_PROBABILITY * 100
+        )
+
+        if roll <= idle_limit:
+            self.choose_idle_action()
+        elif roll <= blink_limit:
             print("本次动作：Blink")
             self.start_blink()
-        elif roll <= 90:
+        elif roll <= walk_limit:
             print("本次动作：Walk")
             self.start_walk()
-        else:
+        elif roll <= sing_limit:
             if self.last_action == "sing":
                 print("Sing 被跳过：上一个动作也是 Sing")
                 self.schedule_next_action()
             else:
                 print("本次动作：Sing")
                 self.start_sing()
+        elif (
+            self.work_entry_available
+            and self.work_frame is not None
+            and self.work_blink_sequence
+        ):
+            print("本次动作：Work")
+            self.start_work()
+        elif roll <= work_limit:
+            self.choose_idle_action()
+
+    def choose_idle_action(self):
+        print("本次动作：Idle")
+        self.last_action = "idle"
+        self.schedule_next_action()
 
     def play_idle_frame(self):
         if self.current_state != "idle" or not self.idle_frames:
@@ -327,24 +415,44 @@ class AnimationManager:
         delta_y = cursor_position.y() - label_center_global.y()
         distance = (delta_x ** 2 + delta_y ** 2) ** 0.5
 
-        if distance == 0 or distance > self.eye_tracking_radius:
-            return 0, 0
-
-        offset_length = min(
-            self.eye_max_offset,
-            distance * 0.04,
-        )
-        offset_x = round(delta_x / distance * offset_length)
-        offset_y = round(delta_y / distance * offset_length)
-
-        # 上眼眶空间较窄，只缩小向上的范围；其余方向保持不变。
-        if offset_y < 0:
-            offset_y = max(
-                offset_y,
-                -round(self.eye_max_up_offset),
+        target_x = 0.0
+        target_y = 0.0
+        if 0 < distance <= self.eye_tracking_radius:
+            offset_length = min(
+                self.eye_max_offset,
+                distance * 0.04,
             )
+            target_x = delta_x / distance * offset_length
+            target_y = delta_y / distance * offset_length
 
-        return offset_x, offset_y
+            # 上眼眶空间较窄，只缩小向上的范围。
+            if target_y < 0:
+                target_y = max(
+                    target_y,
+                    -self.eye_max_up_offset,
+                )
+
+        return self.smooth_pupil_offset(target_x, target_y)
+
+    def smooth_pupil_offset(self, target_x, target_y):
+        """平滑跟随目标位置，并在鼠标离开范围后逐渐回正。"""
+        factor = self.eye_smoothing_factor
+        self.eye_current_offset_x += (
+            target_x - self.eye_current_offset_x
+        ) * factor
+        self.eye_current_offset_y += (
+            target_y - self.eye_current_offset_y
+        ) * factor
+
+        if abs(self.eye_current_offset_x) < 0.05:
+            self.eye_current_offset_x = 0.0
+        if abs(self.eye_current_offset_y) < 0.05:
+            self.eye_current_offset_y = 0.0
+
+        return (
+            round(self.eye_current_offset_x),
+            round(self.eye_current_offset_y),
+        )
 
     def start_blink(self):
         if self.is_interaction_locked():
@@ -489,26 +597,119 @@ class AnimationManager:
         self.walk_timer.stop()
         self.sing_timer.stop()
         self.action_timer.stop()
+        if self.current_state == "hungry":
+            self.hungry_timer.stop()
+            self.start_hungry_cooldown()
 
     def resume_idle(self):
         if self.is_interaction_locked():
             return
+        hungry_was_interrupted = self.saved_state == "hungry"
         self.current_state = "idle"
         self.last_action = "idle"
         self.idle_index = 0
         self.blink_index = 0
         self.walk_index = 0
         self.sing_index = 0
+        self.hungry_index = 0
+        self.hungry_loops_remaining = 0
         if self.idle_frames:
             self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
-        self.schedule_next_action()
+        self.saved_state = None
+        if hungry_was_interrupted:
+            self.idle_cycles_before_actions = 1
+        else:
+            self.schedule_next_action()
 
     def is_interaction_locked(self):
         return self.current_state == "work"
 
+    def start_hungry(self):
+        if (
+            self.current_state != "idle"
+            or not self.hungry_frames_left
+            or self.pet.status_manager.hunger >= HUNGRY_THRESHOLD
+            or time.monotonic() < self.hungry_cooldown_until
+        ):
+            return False
+
+        self.action_timer.stop()
+        self.idle_timer.stop()
+        self.blink_timer.stop()
+        self.walk_timer.stop()
+        self.sing_timer.stop()
+
+        self.current_state = "hungry"
+        self.last_action = "hungry"
+        self.hungry_index = 0
+        self.hungry_loops_remaining = 1
+        self.pet.pet_label.setPixmap(self.get_hungry_frame(0))
+        self.hungry_index = 1
+        self.hungry_timer.start()
+        self.pet.dialogue_manager.show_message(
+            "有点饿了……",
+            duration=3000,
+        )
+        return True
+
+    def get_hungry_frame(self, frame_index):
+        if self.facing_direction == 1:
+            return self.hungry_frames_right[frame_index]
+        return self.hungry_frames_left[frame_index]
+
+    def play_hungry_frame(self):
+        if self.current_state != "hungry":
+            self.hungry_timer.stop()
+            return
+
+        if self.hungry_index < len(self.hungry_frames_left):
+            self.pet.pet_label.setPixmap(
+                self.get_hungry_frame(self.hungry_index)
+            )
+            self.hungry_index += 1
+            return
+
+        self.hungry_loops_remaining -= 1
+        if self.hungry_loops_remaining > 0:
+            self.hungry_index = 0
+            return
+        self.finish_hungry()
+
+    def start_hungry_cooldown(self):
+        self.hungry_cooldown_until = (
+            time.monotonic() + HUNGRY_COOLDOWN_MS / 1000
+        )
+
+    def finish_hungry(self):
+        """结束 hungry，并完成一轮 idle 后再恢复随机动作。"""
+        if self.current_state != "hungry":
+            return False
+
+        self.hungry_timer.stop()
+        self.start_hungry_cooldown()
+        self.current_state = "idle"
+        self.last_action = "hungry"
+        self.hungry_index = 0
+        self.hungry_loops_remaining = 0
+        self.idle_index = 0
+        self.idle_cycles_before_actions = 1
+
+        if self.idle_frames:
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
+        self.idle_timer.start(self.idle_interval)
+        return True
+
+    def stop_hungry_after_feeding(self):
+        if (
+            self.current_state == "hungry"
+            and self.pet.status_manager.hunger >= HUNGRY_THRESHOLD
+        ):
+            return self.finish_hungry()
+        return False
+
     def start_work(self):
-        """从允许切换的 idle 节点进入固定五分钟工作状态。"""
+        """从允许切换的 idle 节点进入固定时长的工作状态。"""
         if (
             self.current_state != "idle"
             or not self.work_entry_available
@@ -529,7 +730,11 @@ class AnimationManager:
         self.work_entry_available = False
         self.work_blink_frame_index = 0
         self.work_blink_playing = False
+        self.work_started_at = time.monotonic()
+        self.work_reward_claimed = False
         self.pet.pet_label.setPixmap(self.work_frame)
+        self.pet.status_manager.update_ui()
+        self.pet.collapse_status_panel_for_work()
 
         if hasattr(self.pet, "dialogue_manager"):
             self.pet.dialogue_manager.hide_message()
@@ -577,13 +782,26 @@ class AnimationManager:
     def finish_work(self):
         """结束 work，强制完成一轮 idle 后再开放随机动作。"""
         if self.current_state != "work":
-            return
+            return False
+
+        elapsed_ms = (
+            time.monotonic() - self.work_started_at
+        ) * 1000
+        if elapsed_ms < WORK_DURATION_MS:
+            return False
+
+        if not self.work_reward_claimed:
+            self.work_reward_claimed = True
+            self.pet.status_manager.add_coins(
+                WORK_REWARD_COINS
+            )
 
         self.work_end_timer.stop()
         self.work_blink_interval_timer.stop()
         self.work_blink_frame_timer.stop()
         self.work_blink_frame_index = 0
         self.work_blink_playing = False
+        self.work_started_at = None
 
         self.current_state = "idle"
         self.last_action = "work"
@@ -593,3 +811,5 @@ class AnimationManager:
         if self.idle_frames:
             self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
+        self.pet.status_manager.update_ui()
+        return True

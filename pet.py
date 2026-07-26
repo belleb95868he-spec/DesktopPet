@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QProgressBar,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -19,7 +20,7 @@ from animation_manager import AnimationManager
 from dialogue import DialogueManager
 from hourly_greetings import HourlyGreetingManager
 from petting_manager import PettingManager
-from status_manager import StatusManager
+from status_manager import APPLE_PRICE, StatusManager
 
 
 class DesktopPet(QWidget):
@@ -190,9 +191,14 @@ class DesktopPet(QWidget):
 
         panel_layout.setSpacing(8)
 
-        # ==================================================
-        # 心情
-        # ==================================================
+        self.status_stack = QStackedWidget()
+        panel_layout.addWidget(self.status_stack)
+
+        # 主状态页面
+        self.main_status_page = QWidget()
+        main_status_layout = QVBoxLayout(self.main_status_page)
+        main_status_layout.setContentsMargins(0, 0, 0, 0)
+        main_status_layout.setSpacing(8)
 
         mood_layout = QHBoxLayout()
 
@@ -225,10 +231,6 @@ class DesktopPet(QWidget):
             self.mood_bar
         )
 
-        # ==================================================
-        # 饱腹
-        # ==================================================
-
         hunger_layout = QHBoxLayout()
 
         self.hunger_label = QLabel(
@@ -260,9 +262,8 @@ class DesktopPet(QWidget):
             self.hunger_bar
         )
 
-        # ==================================================
-        # 按钮
-        # ==================================================
+        self.coin_label = QLabel()
+        self.coin_label.setAlignment(Qt.AlignCenter)
 
         button_layout = QHBoxLayout()
 
@@ -270,36 +271,106 @@ class DesktopPet(QWidget):
             "🍎 喂食"
         )
 
-        self.touch_button = QPushButton(
-            "🤲 摸摸"
+        self.shop_button = QPushButton(
+            "🛒 商店"
         )
 
         self.feed_button.clicked.connect(
-            self.status_manager.feed_pet
+            self.open_food_page
         )
 
-        self.touch_button.clicked.connect(
-            self.status_manager.touch_pet
+        self.shop_button.clicked.connect(
+            self.open_shop_page
         )
 
         button_layout.addWidget(
             self.feed_button
         )
 
-        button_layout.addWidget(
-            self.touch_button
+        button_layout.addWidget(self.shop_button)
+
+        main_status_layout.addLayout(mood_layout)
+        main_status_layout.addLayout(hunger_layout)
+        main_status_layout.addWidget(self.coin_label)
+        main_status_layout.addLayout(button_layout)
+        self.status_stack.addWidget(self.main_status_page)
+
+        # 商店页面
+        self.shop_page = QWidget()
+        shop_layout = QVBoxLayout(self.shop_page)
+        shop_layout.setContentsMargins(0, 0, 0, 0)
+        shop_layout.setSpacing(7)
+
+        shop_title = QLabel("商店")
+        shop_title.setAlignment(Qt.AlignCenter)
+        self.shop_coin_label = QLabel()
+        self.shop_coin_label.setAlignment(Qt.AlignCenter)
+        shop_item_label = QLabel("🍎 苹果")
+        shop_item_label.setAlignment(Qt.AlignCenter)
+        shop_price_label = QLabel(f"价格：{APPLE_PRICE} 金币")
+        shop_price_label.setAlignment(Qt.AlignCenter)
+        self.shop_apple_count_label = QLabel()
+        self.shop_apple_count_label.setAlignment(Qt.AlignCenter)
+        self.shop_message_label = QLabel()
+        self.shop_message_label.setAlignment(Qt.AlignCenter)
+        self.buy_apple_button = QPushButton("购买")
+        self.shop_back_button = QPushButton("返回")
+
+        self.buy_apple_button.clicked.connect(
+            self.buy_apple_from_shop
+        )
+        self.shop_back_button.clicked.connect(
+            self.show_main_status_page
         )
 
-        panel_layout.addLayout(
-            mood_layout
+        shop_layout.addWidget(shop_title)
+        shop_layout.addWidget(self.shop_coin_label)
+        shop_layout.addWidget(shop_item_label)
+        shop_layout.addWidget(shop_price_label)
+        shop_layout.addWidget(self.shop_apple_count_label)
+        shop_layout.addWidget(self.shop_message_label)
+        shop_layout.addWidget(self.buy_apple_button)
+        shop_layout.addWidget(self.shop_back_button)
+        self.status_stack.addWidget(self.shop_page)
+
+        # 食物选择页面
+        self.food_page = QWidget()
+        food_layout = QVBoxLayout(self.food_page)
+        food_layout.setContentsMargins(0, 0, 0, 0)
+        food_layout.setSpacing(7)
+
+        food_title = QLabel("选择食物")
+        food_title.setAlignment(Qt.AlignCenter)
+        food_item_label = QLabel("🍎 苹果")
+        food_item_label.setAlignment(Qt.AlignCenter)
+        self.food_apple_count_label = QLabel()
+        self.food_apple_count_label.setAlignment(Qt.AlignCenter)
+        self.food_message_label = QLabel()
+        self.food_message_label.setAlignment(Qt.AlignCenter)
+        self.feed_apple_button = QPushButton("喂食")
+        self.food_back_button = QPushButton("返回")
+
+        self.feed_apple_button.clicked.connect(
+            self.feed_apple_from_food
+        )
+        self.food_back_button.clicked.connect(
+            self.show_main_status_page
         )
 
-        panel_layout.addLayout(
-            hunger_layout
-        )
-
-        panel_layout.addLayout(
-            button_layout
+        food_layout.addWidget(food_title)
+        food_layout.addWidget(food_item_label)
+        food_layout.addWidget(self.food_apple_count_label)
+        food_layout.addWidget(self.food_message_label)
+        food_layout.addWidget(self.feed_apple_button)
+        food_layout.addWidget(self.food_back_button)
+        self.status_stack.addWidget(self.food_page)
+        self.status_stack.setCurrentWidget(self.main_status_page)
+        self.status_stack.setFixedHeight(
+            max(
+                self.main_status_page.sizeHint().height(),
+                self.shop_page.sizeHint().height(),
+                self.food_page.sizeHint().height(),
+            )
         )
 
         self.main_layout.addWidget(
@@ -593,12 +664,107 @@ class DesktopPet(QWidget):
             - anchor_global_position
         )
 
+    def refresh_economy_ui(self):
+        """统一刷新主状态、商店和食物页面的金币与库存。"""
+        manager = self.status_manager
+        coin_count = max(0, manager.coin_count)
+        apple_count = max(0, manager.apple_count)
+        interaction_enabled = not self.is_interaction_locked()
+
+        self.coin_label.setText(f"🪙 × {coin_count}")
+        self.shop_coin_label.setText(f"金币：{coin_count}")
+        self.shop_apple_count_label.setText(f"持有：{apple_count}")
+        self.food_apple_count_label.setText(f"持有：{apple_count}")
+
+        self.feed_button.setEnabled(interaction_enabled)
+        self.shop_button.setEnabled(interaction_enabled)
+        self.buy_apple_button.setEnabled(
+            interaction_enabled
+            and manager.can_afford(APPLE_PRICE)
+        )
+        self.feed_apple_button.setEnabled(
+            interaction_enabled
+            and apple_count > 0
+            and manager.hunger < 100
+        )
+
+        if coin_count < APPLE_PRICE:
+            self.shop_message_label.setText("金币不足")
+        elif self.shop_message_label.text() == "金币不足":
+            self.shop_message_label.clear()
+
+        if apple_count == 0:
+            self.food_message_label.setText(
+                "没有苹果了，去商店买一个吧。"
+            )
+        elif manager.hunger >= 100:
+            self.food_message_label.setText("已经吃得饱饱的啦～")
+        elif self.food_message_label.text() in (
+            "没有苹果了，去商店买一个吧。",
+            "已经吃得饱饱的啦～",
+        ):
+            self.food_message_label.clear()
+
+    def open_shop_page(self):
+        if self.is_interaction_locked():
+            return
+        self.shop_message_label.clear()
+        self.refresh_economy_ui()
+        self.status_stack.setCurrentWidget(self.shop_page)
+
+    def open_food_page(self):
+        if self.is_interaction_locked():
+            return
+        self.food_message_label.clear()
+        self.refresh_economy_ui()
+        self.status_stack.setCurrentWidget(self.food_page)
+
+    def show_main_status_page(self):
+        if self.is_interaction_locked():
+            return
+        self.refresh_economy_ui()
+        self.status_stack.setCurrentWidget(self.main_status_page)
+
+    def buy_apple_from_shop(self):
+        if self.is_interaction_locked():
+            return
+        purchase_succeeded = self.status_manager.buy_apple()
+        self.refresh_economy_ui()
+        self.shop_message_label.setText(
+            "购买成功" if purchase_succeeded else "金币不足"
+        )
+
+    def feed_apple_from_food(self):
+        if self.is_interaction_locked():
+            return
+        feeding_succeeded = self.status_manager.feed_with_apple()
+        self.refresh_economy_ui()
+        if feeding_succeeded:
+            self.food_message_label.setText("喂食成功")
+        elif self.status_manager.apple_count <= 0:
+            self.food_message_label.setText(
+                "没有苹果了，去商店买一个吧。"
+            )
+        elif self.status_manager.hunger >= 100:
+            self.food_message_label.setText("已经吃得饱饱的啦～")
+
+    def collapse_status_panel_for_work(self):
+        """进入 work 时收起状态栏，不触发普通交互逻辑。"""
+        if not self.status_panel.isVisible():
+            return
+        self.status_panel.hide()
+        self.status_stack.setCurrentWidget(self.main_status_page)
+        self.adjustSize()
+        self.dialogue_manager.update_position()
+        self.keep_inside_screen()
+
     def toggle_status_panel(self):
         if self.is_interaction_locked():
             return
         if self.status_panel.isVisible():
             self.status_panel.hide()
         else:
+            self.show_main_status_page()
             self.status_panel.show()
 
         self.adjustSize()
