@@ -28,11 +28,11 @@ class StatusManager:
             self.pet.dialogue_manager.show_message("已经吃得饱饱的啦～")
             return
 
-        self.hunger = min(100, self.hunger + 20)
+        self.hunger = min(100, self.hunger + 10)
         self.mood = min(100, self.mood + 3)
 
         self.update_ui()
-        self.pet.dialogue_manager.show_message("好吃！饱腹感增加了 🍎")
+        self.pet.dialogue_manager.show_message("好吃！饱腹感增加了 10% 🍎")
         self.save_status()
 
     def touch_pet(self):
