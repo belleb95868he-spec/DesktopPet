@@ -3,7 +3,13 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QPixmap, QTransform
+from PySide6.QtGui import (
+    QCursor,
+    QGuiApplication,
+    QPainter,
+    QPixmap,
+    QTransform,
+)
 
 
 class AnimationManager:
@@ -17,6 +23,52 @@ class AnimationManager:
         self.idle_frames = self.load_animation_frames(
             self.base_path / "assets" / "idle", "idle_*.png"
         )
+        self.idle_frames_right = [
+            frame.transformed(
+                QTransform().scale(-1, 1),
+                Qt.SmoothTransformation,
+            )
+            for frame in self.idle_frames
+        ]
+        eye_tracking_path = self.base_path / "assets" / "idle_pupils"
+        self.idle_base = self.load_image(
+            eye_tracking_path / "idle_base.png"
+        )
+        self.idle_pupils = self.load_image(
+            eye_tracking_path / "idle_pupils.png"
+        )
+        self.idle_eye_mask = self.load_image(
+            eye_tracking_path / "idle_eye_mask.png"
+        )
+        self.eye_tracking_enabled = all(
+            frame is not None
+            for frame in (
+                self.idle_base,
+                self.idle_pupils,
+                self.idle_eye_mask,
+            )
+        )
+        if self.eye_tracking_enabled:
+            mirror_transform = QTransform().scale(-1, 1)
+            self.idle_base_right = self.idle_base.transformed(
+                mirror_transform,
+                Qt.SmoothTransformation,
+            )
+            self.idle_pupils_right = self.idle_pupils.transformed(
+                mirror_transform,
+                Qt.SmoothTransformation,
+            )
+            self.idle_eye_mask_right = self.idle_eye_mask.transformed(
+                mirror_transform,
+                Qt.SmoothTransformation,
+            )
+        else:
+            self.idle_base_right = None
+            self.idle_pupils_right = None
+            self.idle_eye_mask_right = None
+        self.eye_tracking_radius = 450.0
+        self.eye_max_offset = 5.0
+        self.eye_max_up_offset = 3.0
         self.blink_frames = self.load_animation_frames(
             self.base_path / "assets" / "blink", "blink_*.png"
         )
@@ -76,11 +128,13 @@ class AnimationManager:
         )
         self.walk_position_x = float(self.pet.x())
         self.walk_direction = 1
+        # 原始素材朝左；记录最后实际显示的方向供 idle 使用。
+        self.facing_direction = -1
         self.walk_loops_remaining = 0
 
     def start(self):
         if self.idle_frames:
-            self.pet.pet_label.setPixmap(self.idle_frames[0])
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
         self.schedule_next_action()
 
@@ -150,8 +204,81 @@ class AnimationManager:
     def play_idle_frame(self):
         if self.current_state != "idle" or not self.idle_frames:
             return
-        self.pet.pet_label.setPixmap(self.idle_frames[self.idle_index])
+        self.pet.pet_label.setPixmap(
+            self.get_idle_frame(self.idle_index)
+        )
         self.idle_index = (self.idle_index + 1) % len(self.idle_frames)
+
+    def get_idle_frame(self, frame_index):
+        if self.eye_tracking_enabled:
+            return self.render_eye_tracking_idle()
+        if self.facing_direction == 1:
+            return self.idle_frames_right[frame_index]
+        return self.idle_frames[frame_index]
+
+    def render_eye_tracking_idle(self):
+        """按底图、眼球、眼眶遮罩的顺序绘制普通待机状态。"""
+        canvas = QPixmap(self.pet_size, self.pet_size)
+        canvas.fill(Qt.transparent)
+
+        base = self.idle_base
+        pupils = self.idle_pupils
+        eye_mask = self.idle_eye_mask
+
+        if self.facing_direction == 1:
+            base = self.idle_base_right
+            pupils = self.idle_pupils_right
+            eye_mask = self.idle_eye_mask_right
+
+        layer_x = (self.pet_size - base.width()) // 2
+        layer_y = (self.pet_size - base.height()) // 2
+        pupil_offset_x, pupil_offset_y = self.get_pupil_offset()
+
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        # 最下层：人物底图和眼白。
+        painter.drawPixmap(layer_x, layer_y, base)
+        # 中间层：仅眼球层随鼠标小幅移动。
+        painter.drawPixmap(
+            layer_x + pupil_offset_x,
+            layer_y + pupil_offset_y,
+            pupils,
+        )
+        # 最上层：人物前景和眼眶遮罩，挡住越出眼眶的部分。
+        painter.drawPixmap(layer_x, layer_y, eye_mask)
+        painter.end()
+
+        return canvas
+
+    def get_pupil_offset(self):
+        """计算受距离和最大幅度限制的眼球位移。"""
+        label_center_global = self.pet.pet_label.mapToGlobal(
+            self.pet.pet_label.rect().center()
+        )
+        cursor_position = QCursor.pos()
+        delta_x = cursor_position.x() - label_center_global.x()
+        delta_y = cursor_position.y() - label_center_global.y()
+        distance = (delta_x ** 2 + delta_y ** 2) ** 0.5
+
+        if distance == 0 or distance > self.eye_tracking_radius:
+            return 0, 0
+
+        offset_length = min(
+            self.eye_max_offset,
+            distance * 0.04,
+        )
+        offset_x = round(delta_x / distance * offset_length)
+        offset_y = round(delta_y / distance * offset_length)
+
+        # 上眼眶空间较窄，只缩小向上的范围；其余方向保持不变。
+        if offset_y < 0:
+            offset_y = max(
+                offset_y,
+                -round(self.eye_max_up_offset),
+            )
+
+        return offset_x, offset_y
 
     def start_blink(self):
         if not self.blink_frames:
@@ -177,7 +304,7 @@ class AnimationManager:
         self.idle_index = 0
         self.blink_index = 0
         if self.idle_frames:
-            self.pet.pet_label.setPixmap(self.idle_frames[0])
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
         self.schedule_next_action()
 
@@ -202,6 +329,7 @@ class AnimationManager:
     def play_walk_frame(self):
         if self.current_state != "walk" or not self.walk_frames:
             return
+        self.facing_direction = self.walk_direction
         self.pet.pet_label.setPixmap(self.get_walk_frame())
         self.move_pet_one_frame()
         self.walk_index += 1
@@ -245,7 +373,7 @@ class AnimationManager:
         self.idle_index = 0
         self.walk_index = 0
         if self.idle_frames:
-            self.pet.pet_label.setPixmap(self.idle_frames[0])
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
         self.schedule_next_action()
 
@@ -276,7 +404,7 @@ class AnimationManager:
         self.idle_index = 0
         self.sing_index = 0
         if self.idle_frames:
-            self.pet.pet_label.setPixmap(self.idle_frames[0])
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
         self.schedule_next_action()
 
@@ -296,6 +424,6 @@ class AnimationManager:
         self.walk_index = 0
         self.sing_index = 0
         if self.idle_frames:
-            self.pet.pet_label.setPixmap(self.idle_frames[0])
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
         self.schedule_next_action()
