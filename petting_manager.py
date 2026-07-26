@@ -48,7 +48,7 @@ class PettingManager:
 
     def register_head_click(self):
         """记录一次头部点击；第二次点击时判断普通摸摸或害羞。"""
-        if self.locked:
+        if self.locked or self.pet.is_interaction_locked():
             return
 
         now = time.monotonic()
@@ -81,6 +81,8 @@ class PettingManager:
             self.trigger_normal_petting()
 
     def trigger_normal_petting(self):
+        if self.pet.is_interaction_locked():
+            return
         self.pet.dialogue_manager.show_message(
             random.choice(self.normal_messages),
             duration=3000,
@@ -91,6 +93,8 @@ class PettingManager:
         )
 
     def trigger_shy(self):
+        if self.pet.is_interaction_locked():
+            return
         self.pet.dialogue_manager.show_message(
             random.choice(self.shy_messages),
             duration=3500,

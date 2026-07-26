@@ -349,9 +349,16 @@ class DialogueManager:
     def show_message(
         self,
         text,
-        duration=5000
+        duration=5000,
+        allow_during_work=False,
     ):
         """显示一条对话。"""
+
+        if (
+            self.pet.is_interaction_locked()
+            and not allow_during_work
+        ):
+            return
 
         if not text:
             return

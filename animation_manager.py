@@ -11,6 +11,11 @@ from PySide6.QtGui import (
     QTransform,
 )
 
+WORK_ENTER_PROBABILITY = 0.20
+WORK_DURATION_MS = 3 * 60 * 1000
+WORK_BLINK_INTERVAL_MS = 3000
+WORK_BLINK_FRAME_INTERVAL_MS = 100
+
 
 class AnimationManager:
     def __init__(self, pet, base_path: Path, pet_size: int):
@@ -86,6 +91,21 @@ class AnimationManager:
             for frame in self.walk_frames_left
         ]
         self.walk_frames = self.walk_frames_left
+        self.work_frame = self.load_image(
+            self.base_path / "assets" / "work" / "work.png"
+        )
+        self.work_blink_frames = self.load_animation_frames(
+            self.base_path / "assets" / "work_blink",
+            "work_blink*.png",
+        )
+        if len(self.work_blink_frames) == 3:
+            self.work_blink_sequence = [
+                self.work_blink_frames[0],
+                self.work_blink_frames[1],
+                self.work_blink_frames[2],
+            ]
+        else:
+            self.work_blink_sequence = []
 
         self.idle_index = 0
         self.blink_index = 0
@@ -119,6 +139,31 @@ class AnimationManager:
         self.action_timer = QTimer(self.pet)
         self.action_timer.setSingleShot(True)
         self.action_timer.timeout.connect(self.choose_next_action)
+
+        self.work_end_timer = QTimer(self.pet)
+        self.work_end_timer.setSingleShot(True)
+        self.work_end_timer.timeout.connect(self.finish_work)
+
+        self.work_blink_interval_timer = QTimer(self.pet)
+        self.work_blink_interval_timer.setInterval(
+            WORK_BLINK_INTERVAL_MS
+        )
+        self.work_blink_interval_timer.timeout.connect(
+            self.start_work_blink
+        )
+
+        self.work_blink_frame_timer = QTimer(self.pet)
+        self.work_blink_frame_timer.setInterval(
+            WORK_BLINK_FRAME_INTERVAL_MS
+        )
+        self.work_blink_frame_timer.timeout.connect(
+            self.play_work_blink_frame
+        )
+
+        self.work_blink_frame_index = 0
+        self.work_blink_playing = False
+        self.work_entry_available = True
+        self.idle_cycles_before_actions = 0
 
         self.saved_state = None
 
@@ -173,11 +218,24 @@ class AnimationManager:
         return frames
 
     def schedule_next_action(self):
-        if self.current_state == "idle":
+        if (
+            self.current_state == "idle"
+            and self.idle_cycles_before_actions == 0
+        ):
             self.action_timer.start(random.randint(2000, 5000))
 
     def choose_next_action(self):
         if self.current_state != "idle":
+            return
+
+        if (
+            self.work_entry_available
+            and self.work_frame is not None
+            and self.work_blink_sequence
+            and random.random() < WORK_ENTER_PROBABILITY
+        ):
+            print("本次动作：Work")
+            self.start_work()
             return
 
         roll = random.randint(1, 100)
@@ -208,6 +266,14 @@ class AnimationManager:
             self.get_idle_frame(self.idle_index)
         )
         self.idle_index = (self.idle_index + 1) % len(self.idle_frames)
+        if (
+            self.idle_index == 0
+            and self.idle_cycles_before_actions > 0
+        ):
+            self.idle_cycles_before_actions -= 1
+            if self.idle_cycles_before_actions == 0:
+                self.work_entry_available = True
+                self.schedule_next_action()
 
     def get_idle_frame(self, frame_index):
         if self.eye_tracking_enabled:
@@ -281,6 +347,8 @@ class AnimationManager:
         return offset_x, offset_y
 
     def start_blink(self):
+        if self.is_interaction_locked():
+            return
         if not self.blink_frames:
             self.schedule_next_action()
             return
@@ -309,6 +377,8 @@ class AnimationManager:
         self.schedule_next_action()
 
     def start_walk(self):
+        if self.is_interaction_locked():
+            return
         if not self.walk_frames:
             self.schedule_next_action()
             return
@@ -378,6 +448,8 @@ class AnimationManager:
         self.schedule_next_action()
 
     def start_sing(self):
+        if self.is_interaction_locked():
+            return
         if not self.sing_frames:
             self.schedule_next_action()
             return
@@ -409,6 +481,8 @@ class AnimationManager:
         self.schedule_next_action()
 
     def pause_for_drag(self):
+        if self.is_interaction_locked():
+            return
         self.saved_state = self.current_state
         self.idle_timer.stop()
         self.blink_timer.stop()
@@ -417,6 +491,8 @@ class AnimationManager:
         self.action_timer.stop()
 
     def resume_idle(self):
+        if self.is_interaction_locked():
+            return
         self.current_state = "idle"
         self.last_action = "idle"
         self.idle_index = 0
@@ -427,3 +503,93 @@ class AnimationManager:
             self.pet.pet_label.setPixmap(self.get_idle_frame(0))
         self.idle_timer.start(self.idle_interval)
         self.schedule_next_action()
+
+    def is_interaction_locked(self):
+        return self.current_state == "work"
+
+    def start_work(self):
+        """从允许切换的 idle 节点进入固定五分钟工作状态。"""
+        if (
+            self.current_state != "idle"
+            or not self.work_entry_available
+            or self.work_frame is None
+            or not self.work_blink_sequence
+            or self.work_end_timer.isActive()
+        ):
+            return False
+
+        self.action_timer.stop()
+        self.idle_timer.stop()
+        self.blink_timer.stop()
+        self.walk_timer.stop()
+        self.sing_timer.stop()
+
+        self.current_state = "work"
+        self.last_action = "work"
+        self.work_entry_available = False
+        self.work_blink_frame_index = 0
+        self.work_blink_playing = False
+        self.pet.pet_label.setPixmap(self.work_frame)
+
+        if hasattr(self.pet, "dialogue_manager"):
+            self.pet.dialogue_manager.hide_message()
+
+        self.work_end_timer.start(WORK_DURATION_MS)
+        self.work_blink_interval_timer.start()
+        return True
+
+    def start_work_blink(self):
+        if (
+            self.current_state != "work"
+            or self.work_blink_playing
+            or not self.work_blink_sequence
+        ):
+            return
+
+        self.work_blink_playing = True
+        self.work_blink_frame_index = 1
+        self.pet.pet_label.setPixmap(self.work_blink_sequence[0])
+        self.work_blink_frame_timer.start()
+
+    def play_work_blink_frame(self):
+        if self.current_state != "work":
+            self.work_blink_frame_timer.stop()
+            self.work_blink_playing = False
+            self.work_blink_frame_index = 0
+            return
+
+        if self.work_blink_frame_index < len(
+            self.work_blink_sequence
+        ):
+            self.pet.pet_label.setPixmap(
+                self.work_blink_sequence[
+                    self.work_blink_frame_index
+                ]
+            )
+            self.work_blink_frame_index += 1
+            return
+
+        self.work_blink_frame_timer.stop()
+        self.work_blink_frame_index = 0
+        self.work_blink_playing = False
+        self.pet.pet_label.setPixmap(self.work_frame)
+
+    def finish_work(self):
+        """结束 work，强制完成一轮 idle 后再开放随机动作。"""
+        if self.current_state != "work":
+            return
+
+        self.work_end_timer.stop()
+        self.work_blink_interval_timer.stop()
+        self.work_blink_frame_timer.stop()
+        self.work_blink_frame_index = 0
+        self.work_blink_playing = False
+
+        self.current_state = "idle"
+        self.last_action = "work"
+        self.idle_index = 0
+        self.idle_cycles_before_actions = 1
+
+        if self.idle_frames:
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
+        self.idle_timer.start(self.idle_interval)

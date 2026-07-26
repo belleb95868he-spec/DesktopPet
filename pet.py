@@ -43,6 +43,7 @@ class DesktopPet(QWidget):
         self.drag_start_global = QPoint()
         self.window_start_position = QPoint()
         self.is_dragging = False
+        self.work_window_drag = False
         self.lifted_pixmap = None
         self.drag_anchor_window = QPoint()
         self.drag_pivot = QPoint()
@@ -377,6 +378,9 @@ class DesktopPet(QWidget):
                     )
 
                     self.is_dragging = False
+                    self.work_window_drag = (
+                        self.is_interaction_locked()
+                    )
 
                     event.accept()
 
@@ -405,17 +409,24 @@ class DesktopPet(QWidget):
                     if movement.manhattanLength() > 5:
                         if not self.is_dragging:
                             self.is_dragging = True
-                            self.start_drag()
+                            if not self.work_window_drag:
+                                self.start_drag()
 
                     if self.is_dragging:
                         self.current_drag_global = current_global
-                        self.move_drag_anchor_to_mouse(
-                            self.current_drag_global
-                        )
-                        if not self.drag_timer.isActive():
-                            self.drag_timer.start()
-                        if hasattr(self, "activity_trigger_manager"):
-                            self.activity_trigger_manager._register_drag_motion()
+                        if self.work_window_drag:
+                            self.move(
+                                self.window_start_position
+                                + movement
+                            )
+                        else:
+                            self.move_drag_anchor_to_mouse(
+                                self.current_drag_global
+                            )
+                            if not self.drag_timer.isActive():
+                                self.drag_timer.start()
+                            if hasattr(self, "activity_trigger_manager"):
+                                self.activity_trigger_manager._register_drag_motion()
 
                     event.accept()
 
@@ -423,6 +434,24 @@ class DesktopPet(QWidget):
 
             elif event.type() == QEvent.MouseButtonRelease:
                 if event.button() == Qt.LeftButton:
+                    if self.work_window_drag:
+                        if not self.is_dragging:
+                            local_position = (
+                                event.position().toPoint()
+                            )
+                            if self.petting_manager.is_head_position(
+                                local_position
+                            ):
+                                self.dialogue_manager.show_message(
+                                    "等等，我先看完这个文件",
+                                    duration=3500,
+                                    allow_during_work=True,
+                                )
+                        self.is_dragging = False
+                        self.work_window_drag = False
+                        event.accept()
+                        return True
+
                     if self.is_dragging:
                         self.drag_timer.stop()
                         self.drag_swing_phase = 0.0
@@ -443,6 +472,7 @@ class DesktopPet(QWidget):
                             self.toggle_status_panel()
 
                     self.is_dragging = False
+                    self.work_window_drag = False
 
                     event.accept()
 
@@ -454,6 +484,8 @@ class DesktopPet(QWidget):
         )
 
     def start_drag(self):
+        if self.is_interaction_locked():
+            return
         self.animation_manager.pause_for_drag()
         if self.lifted_pixmap is not None:
             rotated = self.render_rotated_lifted_pixmap(0.0)
@@ -461,10 +493,15 @@ class DesktopPet(QWidget):
             self.pet_label.update()
 
     def stop_drag(self):
+        if self.is_interaction_locked():
+            return
         self.animation_manager.resume_idle()
 
     def update_drag_swing(self):
-        if not self.is_dragging:
+        if (
+            not self.is_dragging
+            or self.is_interaction_locked()
+        ):
             self.drag_timer.stop()
             return
 
@@ -557,6 +594,8 @@ class DesktopPet(QWidget):
         )
 
     def toggle_status_panel(self):
+        if self.is_interaction_locked():
+            return
         if self.status_panel.isVisible():
             self.status_panel.hide()
         else:
@@ -567,6 +606,9 @@ class DesktopPet(QWidget):
         self.dialogue_manager.update_position()
 
         self.keep_inside_screen()
+
+    def is_interaction_locked(self):
+        return self.animation_manager.is_interaction_locked()
 
     def show_context_menu(
         self,

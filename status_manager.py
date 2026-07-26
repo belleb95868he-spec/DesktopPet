@@ -24,6 +24,8 @@ class StatusManager:
         self.status_timer.start(60_000)
 
     def feed_pet(self):
+        if self.pet.is_interaction_locked():
+            return
         if self.hunger >= 100:
             self.pet.dialogue_manager.show_message("已经吃得饱饱的啦～")
             return
@@ -36,6 +38,8 @@ class StatusManager:
         self.save_status()
 
     def touch_pet(self):
+        if self.pet.is_interaction_locked():
+            return
         self.increase_mood(
             amount=10,
             message="被摸摸了，好开心！✨",
@@ -48,6 +52,8 @@ class StatusManager:
         show_message=True,
     ):
         """增加心情值，供按钮和头部摸摸互动共同调用。"""
+        if self.pet.is_interaction_locked():
+            return
         if self.mood >= 100:
             if show_message:
                 self.pet.dialogue_manager.show_message(
