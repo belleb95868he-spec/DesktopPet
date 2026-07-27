@@ -16,14 +16,18 @@ class SpeechBubble(QWidget):
         super().__init__(None)
 
         self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.Tool
+            Qt.Tool
+            | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus
         )
 
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # Ensure the system does not draw a default background for this window
+        # so the rounded bubble drawn in paintEvent is the only visible content.
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
 
         self.text_label = QLabel(self)
 
@@ -167,6 +171,11 @@ class SpeechBubble(QWidget):
         )
 
         self.update()
+
+    def paintEvent(self, event):
+        # Keep paintEvent as implemented below; this placeholder
+        # ensures any external calls land here when we instrument.
+        super().paintEvent(event)
 
     def paintEvent(self, event):
         """绘制气泡框和三角形尾巴。"""
@@ -340,9 +349,17 @@ class DialogueManager:
     def show_message(
         self,
         text,
-        duration=5000
+        duration=5000,
+        allow_during_work=False,
+        allow_during_petting=False,
     ):
         """显示一条对话。"""
+
+        current_state = self.pet.animation_manager.current_state
+        if current_state == "work" and not allow_during_work:
+            return
+        if current_state == "petting" and not allow_during_petting:
+            return
 
         if not text:
             return
@@ -352,8 +369,10 @@ class DialogueManager:
             text
         )
 
-        self.dialogue_label.show()
-        self.dialogue_label.raise_()
+        print(f"[DialogueManager] show_message called: {text}")
+
+        self.dialogue_label.setWindowOpacity(1.0)
+        self.dialogue_label.setVisible(True)
 
         # 气泡宽度改变后重新计算位置
         self.update_position()

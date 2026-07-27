@@ -10,32 +10,21 @@ class PettingManager:
     # 两次点击相隔不超过 700ms，视为一次摸摸
     DOUBLE_CLICK_INTERVAL = 0.70
 
-    # 两次点击相隔不超过 220ms，视为点得太快并触发害羞
-    SHY_CLICK_INTERVAL = 0.22
-
     # 头部区域占人物图片高度的比例
     HEAD_AREA_RATIO = 0.46
 
     def __init__(self, pet):
         self.pet = pet
         self.first_click_time = None
-        self.locked = False
 
         self.reset_timer = QTimer(self.pet)
         self.reset_timer.setSingleShot(True)
         self.reset_timer.timeout.connect(self.reset_clicks)
 
-        self.unlock_timer = QTimer(self.pet)
-        self.unlock_timer.setSingleShot(True)
-        self.unlock_timer.timeout.connect(self.unlock)
-
-        self.normal_messages = [
+        self.messages = [
             "被摸摸了，好开心！✨",
             "嘿嘿，再摸一下也可以～",
             "头发没有乱掉吧？",
-        ]
-
-        self.shy_messages = [
             "别、别摸这么快啦……///",
             "等一下！突然这样会害羞的……",
             "呜……心跳都变快了！",
@@ -47,8 +36,8 @@ class PettingManager:
         return local_position.y() <= head_limit
 
     def register_head_click(self):
-        """记录一次头部点击；第二次点击时判断普通摸摸或害羞。"""
-        if self.locked:
+        """记录头部点击；每次有效双击增加心情并刷新对话。"""
+        if self.pet.animation_manager.current_state == "work":
             return
 
         now = time.monotonic()
@@ -72,36 +61,21 @@ class PettingManager:
             )
             return
 
-        self.locked = True
-        self.unlock_timer.start(650)
+        self.trigger_petting()
 
-        if interval <= self.SHY_CLICK_INTERVAL:
-            self.trigger_shy()
-        else:
-            self.trigger_normal_petting()
-
-    def trigger_normal_petting(self):
+    def trigger_petting(self):
+        """动画只在空闲时启动；动画中双击仍会增加心情和更新对话。"""
+        self.pet.animation_manager.start_petting()
         self.pet.dialogue_manager.show_message(
-            random.choice(self.normal_messages),
+            random.choice(self.messages),
             duration=3000,
+            allow_during_petting=True,
         )
         self.pet.status_manager.increase_mood(
             amount=10,
             show_message=False,
-        )
-
-    def trigger_shy(self):
-        self.pet.dialogue_manager.show_message(
-            random.choice(self.shy_messages),
-            duration=3500,
-        )
-        self.pet.status_manager.increase_mood(
-            amount=15,
-            show_message=False,
+            allow_during_petting=True,
         )
 
     def reset_clicks(self):
         self.first_click_time = None
-
-    def unlock(self):
-        self.locked = False
