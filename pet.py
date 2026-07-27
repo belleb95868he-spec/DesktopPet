@@ -35,6 +35,7 @@ class DesktopPet(QWidget):
             Qt.Window
             | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
+            | Qt.NoDropShadowWindowHint
         )
 
         self.setAttribute(

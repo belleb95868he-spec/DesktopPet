@@ -88,7 +88,7 @@ class AnimationManager:
         self.eye_tracking_radius = 200.0
         self.eye_max_offset = 5.0
         self.eye_max_up_offset = 3.0
-        self.eye_smoothing_factor = 0.35
+        self.eye_smoothing_factor = 0.6
         self.eye_current_offset_x = 0.0
         self.eye_current_offset_y = 0.0
         self.blink_frames = self.load_animation_frames(
