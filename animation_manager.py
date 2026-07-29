@@ -933,3 +933,30 @@ class AnimationManager:
         self.idle_timer.start(self.idle_interval)
         self.pet.status_manager.update_ui()
         return True
+
+    def cancel_work(self):
+        """Manually leave work without granting the completion reward."""
+        if self.current_state != "work":
+            return False
+
+        self.work_end_timer.stop()
+        self.work_blink_interval_timer.stop()
+        self.work_blink_frame_timer.stop()
+        self.work_blink_frame_index = 0
+        self.work_blink_playing = False
+        self.work_started_at = None
+        self.work_reward_claimed = False
+        self.work_cooldown_until = (
+            time.monotonic() + WORK_COOLDOWN_MS / 1000
+        )
+
+        self.current_state = "idle"
+        self.last_action = "work"
+        self.idle_index = 0
+        self.idle_cycles_before_actions = 1
+
+        if self.idle_frames:
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
+        self.idle_timer.start(self.idle_interval)
+        self.pet.status_manager.update_ui()
+        return True

@@ -205,6 +205,10 @@ class StatusManager:
 
     @staticmethod
     def update_bar_style(progress_bar, value, normal_color):
+        if progress_bar.property("profileBar"):
+            progress_bar.update()
+            return
+
         if value <= 20:
             chunk_color = "#ff6b6b"
         elif value <= 40:

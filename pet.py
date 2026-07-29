@@ -2,8 +2,20 @@ import math
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QEvent, Qt, QTimer
-from PySide6.QtGui import QAction, QGuiApplication, QPixmap, QTransform, QPainter
+from PySide6.QtCore import QElapsedTimer, QPoint, QEvent, QRectF, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QTransform,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -23,9 +35,152 @@ from petting_manager import PettingManager
 from status_manager import APPLE_PRICE, StatusManager
 
 
+PROFILE_FONT = "乐米元气团团体"
+
+
+def load_hidpi_pixmap(path, width, height):
+    """Scale an asset at screen pixel density while preserving its ratio."""
+    pixmap = QPixmap(str(path))
+    screen = QGuiApplication.primaryScreen()
+    ratio = screen.devicePixelRatio() if screen is not None else 1.0
+    scaled = pixmap.scaled(
+        round(width * ratio),
+        round(height * ratio),
+        Qt.KeepAspectRatio,
+        Qt.SmoothTransformation,
+    )
+    scaled.setDevicePixelRatio(ratio)
+    return scaled
+
+
+def load_hidpi_icon(path, height=23, max_width=36):
+    """Normalize status icons by visual height without changing aspect ratio."""
+    pixmap = QPixmap(str(path))
+    screen = QGuiApplication.primaryScreen()
+    ratio = screen.devicePixelRatio() if screen is not None else 1.0
+    scaled = pixmap.scaledToHeight(
+        round(height * ratio),
+        Qt.SmoothTransformation,
+    )
+    if scaled.width() > round(max_width * ratio):
+        scaled = pixmap.scaledToWidth(
+            round(max_width * ratio),
+            Qt.SmoothTransformation,
+        )
+    scaled.setDevicePixelRatio(ratio)
+    return scaled
+
+
+class ProfileProgressBar(QProgressBar):
+    """Reference-style rounded progress bar drawn without bitmap UI."""
+
+    def __init__(self, maximum=100, parent=None):
+        super().__init__(parent)
+        self.setRange(0, maximum)
+        self.setTextVisible(False)
+        self.setFixedSize(90, 13)
+        self.setProperty("profileBar", True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        bounds = QRectF(self.rect())
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#ddd2c2"))
+        painter.drawRoundedRect(bounds, 6.5, 6.5)
+
+        ratio = 0 if self.maximum() <= 0 else self.value() / self.maximum()
+        fill_width = max(0.0, bounds.width() * ratio)
+        if fill_width:
+            painter.setBrush(QColor("#93dc38"))
+            track_clip = QPainterPath()
+            track_clip.addRoundedRect(bounds, 6.5, 6.5)
+            painter.save()
+            painter.setClipPath(track_clip)
+            painter.drawRect(QRectF(0, 0, fill_width, bounds.height()))
+            painter.restore()
+
+        painter.setPen(QColor(85, 135, 47))
+        font = QFont("Noto Sans")
+        font.setPixelSize(7)
+        font.setWeight(QFont.DemiBold)
+        painter.setFont(font)
+        if self.maximum() == 2000:
+            text = f"{self.value()} / {self.maximum()}"
+        else:
+            text = f"{self.value()}% / {self.maximum()}%"
+        painter.drawText(bounds, Qt.AlignCenter, text)
+
+
+class ProfilePage(QWidget):
+    """Native-size profile card using the provided frame as its background."""
+
+    WIDTH = 315
+    HEIGHT = 240
+    SCALE_X = WIDTH / 601
+    SCALE_Y = HEIGHT / 458
+
+    def __init__(self, asset_root, parent=None):
+        super().__init__(parent)
+        self.asset_root = Path(asset_root)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.scale(self.SCALE_X, self.SCALE_Y)
+
+        frame = QPixmap(str(self.asset_root / "frame" / "Card Design.png"))
+        painter.drawPixmap(
+            QRectF(0, 0, 601, 458),
+            frame,
+            QRectF(frame.rect()),
+        )
+        painter.translate(-9, 0)
+
+        # Portrait frame and ribbon remain code-drawn.
+        painter.setBrush(QColor("#ffffff"))
+        painter.setPen(QPen(QColor("#eadfce"), 3))
+        painter.drawRect(QRectF(57, 162, 168, 200))
+
+        # Ribbon and its folded ends.
+        painter.setPen(Qt.NoPen)
+        ribbon_gradient = QLinearGradient(0, 359, 0, 397)
+        ribbon_gradient.setColorAt(0.0, QColor("#b8734b"))
+        ribbon_gradient.setColorAt(0.48, QColor("#b8734b"))
+        ribbon_gradient.setColorAt(0.52, QColor("#965633"))
+        ribbon_gradient.setColorAt(1.0, QColor("#965633"))
+        painter.setBrush(ribbon_gradient)
+        ribbon = QPainterPath()
+        ribbon.moveTo(57, 359)
+        ribbon.lineTo(225, 359)
+        ribbon.lineTo(215, 378)
+        ribbon.lineTo(225, 397)
+        ribbon.lineTo(57, 397)
+        ribbon.lineTo(67, 378)
+        ribbon.closeSubpath()
+        painter.drawPath(ribbon)
+
+        painter.setPen(QColor("#ffffff"))
+        font = QFont(PROFILE_FONT)
+        font.setPixelSize(round(13 / self.SCALE_Y))
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(QRectF(57, 360, 168, 37), Qt.AlignCenter, "Lv.20  L Xu")
+
+
 class DesktopPet(QWidget):
     def __init__(self):
         super().__init__()
+
+        global PROFILE_FONT
+        font_path = Path.home() / "Library" / "Fonts" / "乐米元气团团体.ttf"
+        if font_path.exists():
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                PROFILE_FONT = families[0]
 
         self.pet_size = 250
         self.base_path = Path(__file__).resolve().parent
@@ -57,6 +212,8 @@ class DesktopPet(QWidget):
         self.drag_timer = QTimer(self)
         self.drag_timer.setInterval(16)
         self.drag_timer.timeout.connect(self.update_drag_swing)
+        self.session_elapsed = QElapsedTimer()
+        self.session_elapsed.start()
 
         # ==================================================
         # 功能管理器
@@ -112,20 +269,10 @@ class DesktopPet(QWidget):
     # ==================================================
 
     def setup_ui(self):
-        self.main_layout = QVBoxLayout(self)
-
-        self.main_layout.setContentsMargins(
-            8,
-            8,
-            8,
-            8,
-        )
-
-        self.main_layout.setSpacing(5)
-
-        self.main_layout.setAlignment(
-            Qt.AlignCenter
-        )
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(8, 8, 8, 8)
+        self.main_layout.setSpacing(0)
+        self.main_layout.setAlignment(Qt.AlignBottom)
 
         self.pet_label = QLabel()
 
@@ -163,10 +310,7 @@ class DesktopPet(QWidget):
                 """
             )
 
-        self.main_layout.addWidget(
-            self.pet_label,
-            alignment=Qt.AlignCenter,
-        )
+        self.main_layout.addWidget(self.pet_label, alignment=Qt.AlignBottom)
 
         self.lifted_pixmap = self.load_lifted_pixmap()
 
@@ -175,126 +319,118 @@ class DesktopPet(QWidget):
         # ==================================================
 
         self.status_panel = QWidget()
-
-        self.status_panel.setObjectName(
-            "statusPanel"
-        )
-
-        panel_layout = QVBoxLayout(
-            self.status_panel
-        )
-
-        panel_layout.setContentsMargins(
-            14,
-            12,
-            14,
-            12,
-        )
-
-        panel_layout.setSpacing(8)
+        self.status_panel.setObjectName("statusPanel")
+        self.status_panel.setFixedSize(ProfilePage.WIDTH, ProfilePage.HEIGHT)
+        panel_layout = QVBoxLayout(self.status_panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
 
         self.status_stack = QStackedWidget()
         panel_layout.addWidget(self.status_stack)
 
         # 主状态页面
-        self.main_status_page = QWidget()
-        main_status_layout = QVBoxLayout(self.main_status_page)
-        main_status_layout.setContentsMargins(0, 0, 0, 0)
-        main_status_layout.setSpacing(8)
-
-        mood_layout = QHBoxLayout()
-
-        self.mood_label = QLabel(
-            "❤️ 心情"
+        ui_root = self.base_path / "assets" / "ui" / "profile"
+        self.main_status_page = ProfilePage(ui_root)
+        portrait = QLabel(self.main_status_page)
+        portrait.setGeometry(32, 90, 74, 94)
+        portrait.setAlignment(Qt.AlignCenter)
+        portrait.setPixmap(
+            load_hidpi_pixmap(
+                ui_root / "Photo" / "Photo.png",
+                74,
+                94,
+            )
         )
 
-        self.mood_label.setFixedWidth(60)
+        for index in range(5):
+            star = QLabel(self.main_status_page)
+            star.setGeometry(33 + index * 14, 174, 14, 14)
+            star_name = (
+                "State=Filled.png" if index == 0 else "State=Empty.png"
+            )
+            star.setAlignment(Qt.AlignCenter)
+            star.setPixmap(
+                load_hidpi_pixmap(
+                    ui_root / "star" / star_name,
+                    14,
+                    14,
+                )
+            )
 
-        self.mood_bar = QProgressBar()
+        rows = [
+            ("EXP", "经验值", "Icon - EXP.png", 2000, 1500),
+            ("Mood", "心 情", "Icon - Mood.png", 100, self.status_manager.mood),
+            ("Food", "饱 腹", "Icon - Food.png", 100, self.status_manager.hunger),
+            ("Tired", "疲 劳", "Icon - Tired.png", 100, 80),
+        ]
+        self.profile_bars = {}
+        for row, (key, text, icon_name, maximum, value) in enumerate(rows):
+            y = 84 + row * 20
+            icon = QLabel(self.main_status_page)
+            icon.setGeometry(126, y - 4, 29, 22)
+            icon.setAlignment(Qt.AlignCenter)
+            icon_height = 14 if key in {"EXP", "Mood"} else 18
+            icon_max_width = 23 if key in {"EXP", "Mood"} else 29
+            icon.setPixmap(
+                load_hidpi_icon(
+                    ui_root / "icons" / icon_name,
+                    height=icon_height,
+                    max_width=icon_max_width,
+                )
+            )
+            label = QLabel(text, self.main_status_page)
+            label.setGeometry(155, y - 2, 43, 19)
+            label.setStyleSheet(
+                f"color:#80613c; font-family:'{PROFILE_FONT}'; "
+                "font-size:13px; font-weight:bold;"
+            )
+            bar = ProfileProgressBar(maximum, self.main_status_page)
+            bar.setGeometry(200, y, 90, 13)
+            bar.setValue(value)
+            self.profile_bars[key] = bar
+        self.mood_bar = self.profile_bars["Mood"]
+        self.hunger_bar = self.profile_bars["Food"]
 
-        self.mood_bar.setRange(
-            0,
-            100,
+        time_icon = QLabel(self.main_status_page)
+        time_icon.setGeometry(126, 160, 29, 22)
+        time_icon.setAlignment(Qt.AlignCenter)
+        time_icon.setPixmap(
+            load_hidpi_icon(
+                ui_root / "icons" / "Icon - Time.png",
+                height=19,
+                max_width=26,
+            )
         )
-
-        self.mood_bar.setTextVisible(
-            True
+        time_label = QLabel("陪伴时间", self.main_status_page)
+        time_label.setGeometry(155, 162, 58, 19)
+        time_label.setAlignment(Qt.AlignCenter)
+        time_label.setStyleSheet(
+            f"color:#80613c; font-family:'{PROFILE_FONT}'; "
+            "font-size:13px; font-weight:bold;"
         )
-
-        self.mood_bar.setFormat(
-            "%p%"
+        self.companion_label = QLabel(self.main_status_page)
+        self.companion_label.setGeometry(216, 162, 66, 19)
+        self.companion_label.setAlignment(Qt.AlignCenter)
+        self.companion_label.setStyleSheet(
+            f"color:#e46f61; font-family:'{PROFILE_FONT}'; "
+            "font-size:13px; font-weight:bold;"
         )
+        self.update_companion_time()
+        self.companion_timer = QTimer(self)
+        self.companion_timer.setInterval(1000)
+        self.companion_timer.timeout.connect(self.update_companion_time)
+        self.companion_timer.start()
 
-        mood_layout.addWidget(
-            self.mood_label
-        )
+        self.shop_button = QPushButton("商店", self.main_status_page)
+        self.shop_button.setObjectName("shopButton")
+        self.shop_button.setGeometry(135, 190, 68, 23)
+        self.feed_button = QPushButton("背包", self.main_status_page)
+        self.feed_button.setObjectName("bagButton")
+        self.feed_button.setGeometry(213, 190, 68, 23)
+        self.feed_button.clicked.connect(self.open_food_page)
+        self.shop_button.clicked.connect(self.open_shop_page)
 
-        mood_layout.addWidget(
-            self.mood_bar
-        )
-
-        hunger_layout = QHBoxLayout()
-
-        self.hunger_label = QLabel(
-            "🍖 饱腹"
-        )
-
-        self.hunger_label.setFixedWidth(60)
-
-        self.hunger_bar = QProgressBar()
-
-        self.hunger_bar.setRange(
-            0,
-            100,
-        )
-
-        self.hunger_bar.setTextVisible(
-            True
-        )
-
-        self.hunger_bar.setFormat(
-            "%p%"
-        )
-
-        hunger_layout.addWidget(
-            self.hunger_label
-        )
-
-        hunger_layout.addWidget(
-            self.hunger_bar
-        )
-
-        self.coin_label = QLabel()
-        self.coin_label.setAlignment(Qt.AlignCenter)
-
-        button_layout = QHBoxLayout()
-
-        self.feed_button = QPushButton(
-            "🍎 喂食"
-        )
-
-        self.shop_button = QPushButton(
-            "🛒 商店"
-        )
-
-        self.feed_button.clicked.connect(
-            self.open_food_page
-        )
-
-        self.shop_button.clicked.connect(
-            self.open_shop_page
-        )
-
-        button_layout.addWidget(
-            self.feed_button
-        )
-
-        button_layout.addWidget(self.shop_button)
-
-        main_status_layout.addLayout(mood_layout)
-        main_status_layout.addLayout(hunger_layout)
-        main_status_layout.addWidget(self.coin_label)
-        main_status_layout.addLayout(button_layout)
+        self.coin_label = QLabel(self.main_status_page)
+        self.coin_label.hide()
         self.status_stack.addWidget(self.main_status_page)
 
         # 商店页面
@@ -367,67 +503,74 @@ class DesktopPet(QWidget):
         food_layout.addWidget(self.food_back_button)
         self.status_stack.addWidget(self.food_page)
         self.status_stack.setCurrentWidget(self.main_status_page)
-        self.status_stack.setFixedHeight(
-            max(
-                self.main_status_page.sizeHint().height(),
-                self.shop_page.sizeHint().height(),
-                self.food_page.sizeHint().height(),
-            )
-        )
+        self.status_stack.setFixedSize(ProfilePage.WIDTH, ProfilePage.HEIGHT)
 
+        self.status_panel_positioner = QWidget()
+        self.status_panel_positioner.setFixedSize(
+            ProfilePage.WIDTH,
+            ProfilePage.HEIGHT + 20,
+        )
+        positioner_layout = QVBoxLayout(self.status_panel_positioner)
+        positioner_layout.setContentsMargins(0, 0, 0, 20)
+        positioner_layout.setSpacing(0)
+        positioner_layout.addWidget(
+            self.status_panel,
+            alignment=Qt.AlignTop,
+        )
         self.main_layout.addWidget(
-            self.status_panel
+            self.status_panel_positioner,
+            alignment=Qt.AlignBottom,
         )
 
         self.status_panel.hide()
+        self.status_panel_positioner.hide()
 
         self.setStyleSheet(
             """
             QWidget#statusPanel {
-                background-color: rgba(255, 255, 255, 235);
-                border: 1px solid rgba(120, 120, 120, 100);
-                border-radius: 14px;
+                background: transparent;
             }
 
             QLabel {
                 color: #444444;
+                font-family: "乐米元气团团体";
                 font-size: 13px;
-            }
-
-            QProgressBar {
-                min-width: 135px;
-                height: 14px;
-                border: 1px solid #c8c8c8;
-                border-radius: 7px;
-                background-color: #eeeeee;
-                text-align: center;
-                color: #444444;
-                font-size: 10px;
             }
 
             QPushButton {
-                min-height: 30px;
-                padding-left: 12px;
-                padding-right: 12px;
-                background-color: white;
-                color: #444444;
-                border: 1px solid #d0d0d0;
-                border-radius: 8px;
+                background-color: #ef7569;
+                color: white;
+                border: 2px solid #d95e52;
+                border-radius: 10px;
+                font-family: "乐米元气团团体";
                 font-size: 13px;
+                font-weight: bold;
             }
 
             QPushButton:hover {
-                background-color: #fff4df;
-                border-color: #efb45f;
+                background-color: #f3867b;
             }
 
             QPushButton:pressed {
-                background-color: #ffe5b9;
+                background-color: #d95e52;
+            }
+
+            QPushButton#bagButton {
+                background-color: #f4aa3e;
+                border-color: #df8d16;
+            }
+
+            QPushButton#bagButton:hover {
+                background-color: #f7b653;
+            }
+
+            QPushButton#bagButton:pressed {
+                background-color: #df8d16;
             }
             """
         )
 
-        self.adjustSize()
+        self.setFixedSize(self.pet_size + 16, self.pet_size + 16)
         self.update_drag_anchor_window()
 
     # ==================================================
@@ -727,6 +870,11 @@ class DesktopPet(QWidget):
         ):
             self.food_message_label.clear()
 
+    def update_companion_time(self):
+        """Display elapsed time for the current application session."""
+        elapsed_minutes = max(0, self.session_elapsed.elapsed() // 60_000)
+        self.companion_label.setText(f"{elapsed_minutes} 分钟")
+
     def open_shop_page(self):
         if self.is_economy_interaction_locked():
             return
@@ -775,8 +923,9 @@ class DesktopPet(QWidget):
         if not self.status_panel.isVisible():
             return
         self.status_panel.hide()
+        self.status_panel_positioner.hide()
         self.status_stack.setCurrentWidget(self.main_status_page)
-        self.adjustSize()
+        self.setFixedSize(self.pet_size + 16, self.pet_size + 16)
         self.dialogue_manager.update_position()
         self.keep_inside_screen()
 
@@ -785,11 +934,19 @@ class DesktopPet(QWidget):
             return
         if self.status_panel.isVisible():
             self.status_panel.hide()
+            self.status_panel_positioner.hide()
+            self.setFixedSize(self.pet_size + 16, self.pet_size + 16)
         else:
             self.show_main_status_page()
+            self.status_panel_positioner.show()
             self.status_panel.show()
-
-        self.adjustSize()
+            self.setFixedSize(
+                self.pet_size + ProfilePage.WIDTH + 16,
+                max(
+                    self.pet_size,
+                    ProfilePage.HEIGHT + 20,
+                ) + 16,
+            )
 
         self.dialogue_manager.update_position()
 
@@ -817,6 +974,13 @@ class DesktopPet(QWidget):
             self.toggle_status_panel
         )
 
+        cancel_work_action = None
+        if self.animation_manager.current_state == "work":
+            cancel_work_action = QAction("退出工作", self)
+            cancel_work_action.triggered.connect(
+                self.animation_manager.cancel_work
+            )
+
         quit_action = QAction(
             "退出桌宠",
             self,
@@ -829,6 +993,9 @@ class DesktopPet(QWidget):
         menu.addAction(
             toggle_action
         )
+
+        if cancel_work_action is not None:
+            menu.addAction(cancel_work_action)
 
         menu.addSeparator()
 
