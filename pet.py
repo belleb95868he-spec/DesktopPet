@@ -759,8 +759,11 @@ class DesktopPet(QWidget):
         if self.lifted_pixmap is None:
             return self.animation_manager.idle_frames[0]
 
-        canvas = QPixmap(self.pet_size, self.pet_size)
+        ratio = self.animation_manager.device_pixel_ratio
+        physical_size = round(self.pet_size * ratio)
+        canvas = QPixmap(physical_size, physical_size)
         canvas.fill(Qt.transparent)
+        canvas.setDevicePixelRatio(ratio)
         painter = QPainter(canvas)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
@@ -787,20 +790,26 @@ class DesktopPet(QWidget):
             print(f"无法读取 lifted 图像：{lifted_path}")
             return None
 
+        ratio = self.animation_manager.device_pixel_ratio
+        physical_size = round(self.pet_size * ratio)
         scaled = pixmap.scaled(
-            self.pet_size,
-            self.pet_size,
+            physical_size,
+            physical_size,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+        scaled.setDevicePixelRatio(ratio)
+        logical_width = scaled.width() / ratio
+        logical_height = scaled.height() / ratio
 
         pivot = QPoint(
-            round(scaled.width() * 603 / pixmap.width()),
-            round(scaled.height() * 150 / pixmap.height()),
+            round(logical_width * 603 / pixmap.width()),
+            round(logical_height * 150 / pixmap.height()),
         )
         self.drag_label_x = (
-            self.pet_size - scaled.width()
+            self.pet_size - logical_width
         ) // 2
+        self.drag_label_x = round(self.drag_label_x)
         self.drag_pivot = QPoint(
             self.drag_label_x + pivot.x(),
             pivot.y(),

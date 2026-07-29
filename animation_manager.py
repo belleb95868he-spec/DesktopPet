@@ -36,6 +36,12 @@ class AnimationManager:
         self.pet = pet
         self.base_path = base_path
         self.pet_size = pet_size
+        screen = QGuiApplication.primaryScreen()
+        self.device_pixel_ratio = (
+            max(1.0, screen.devicePixelRatio())
+            if screen is not None
+            else 1.0
+        )
         self.current_state = "idle"
         self.last_action = "idle"
 
@@ -265,12 +271,15 @@ class AnimationManager:
         pixmap = QPixmap(str(image_path))
         if pixmap.isNull():
             return None
-        return pixmap.scaled(
-            self.pet_size,
-            self.pet_size,
+        target_size = round(self.pet_size * self.device_pixel_ratio)
+        scaled = pixmap.scaled(
+            target_size,
+            target_size,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+        scaled.setDevicePixelRatio(self.device_pixel_ratio)
+        return scaled
 
     def load_animation_frames(self, folder: Path, filename_pattern: str):
         frames = []
@@ -412,8 +421,12 @@ class AnimationManager:
 
     def render_eye_tracking_idle(self):
         """按底图、眼球、眼眶遮罩的顺序绘制普通待机状态。"""
-        canvas = QPixmap(self.pet_size, self.pet_size)
+        physical_size = round(
+            self.pet_size * self.device_pixel_ratio
+        )
+        canvas = QPixmap(physical_size, physical_size)
         canvas.fill(Qt.transparent)
+        canvas.setDevicePixelRatio(self.device_pixel_ratio)
 
         base = self.idle_base
         pupils = self.idle_pupils
@@ -424,8 +437,10 @@ class AnimationManager:
             pupils = self.idle_pupils_right
             eye_mask = self.idle_eye_mask_right
 
-        layer_x = (self.pet_size - base.width()) // 2
-        layer_y = (self.pet_size - base.height()) // 2
+        base_width = base.width() / base.devicePixelRatio()
+        base_height = base.height() / base.devicePixelRatio()
+        layer_x = round((self.pet_size - base_width) / 2)
+        layer_y = round((self.pet_size - base_height) / 2)
         pupil_offset_x, pupil_offset_y = self.get_pupil_offset()
 
         painter = QPainter(canvas)
