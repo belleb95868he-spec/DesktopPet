@@ -2,7 +2,15 @@ import math
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QElapsedTimer, QPoint, QEvent, QRectF, Qt, QTimer
+from PySide6.QtCore import (
+    QElapsedTimer,
+    QPoint,
+    QEvent,
+    QRectF,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -32,10 +40,25 @@ from animation_manager import AnimationManager
 from dialogue import DialogueManager
 from hourly_greetings import HourlyGreetingManager
 from petting_manager import PettingManager
-from status_manager import APPLE_PRICE, StatusManager
+from status_manager import APPLE_PRICE, SHOP_PRICES, StatusManager
 
 
 PROFILE_FONT = "乐米元气团团体"
+SHOP_ITEMS = [
+    ("ice", "棒冰", 3, "ice.png"),
+    ("sausage", "烤肠", 6, "sausage.png"),
+    ("apple", "苹果", 10, "apple.png"),
+    ("milk", "牛奶", 12, "milk.png"),
+    ("bread", "鸡腿面包", 20, "bread.png"),
+    ("milktea", "奶茶", 25, "milktea.png"),
+    ("drink", "能量饮料", 30, "drink.png"),
+    ("ramen", "清汤拉面", 40, "ramen.png"),
+    ("salad", "健康轻食", 45, "salad.png"),
+]
+SHOP_ITEM_MAP = {
+    item[0]: item
+    for item in SHOP_ITEMS
+}
 
 
 def load_hidpi_pixmap(path, width, height):
@@ -78,7 +101,7 @@ class ProfileProgressBar(QProgressBar):
         super().__init__(parent)
         self.setRange(0, maximum)
         self.setTextVisible(False)
-        self.setFixedSize(90, 13)
+        self.setFixedSize(109, 15)
         self.setProperty("profileBar", True)
 
     def paintEvent(self, event):
@@ -87,14 +110,14 @@ class ProfileProgressBar(QProgressBar):
         bounds = QRectF(self.rect())
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor("#ddd2c2"))
-        painter.drawRoundedRect(bounds, 6.5, 6.5)
+        painter.drawRoundedRect(bounds, 7.5, 7.5)
 
         ratio = 0 if self.maximum() <= 0 else self.value() / self.maximum()
         fill_width = max(0.0, bounds.width() * ratio)
         if fill_width:
             painter.setBrush(QColor("#93dc38"))
             track_clip = QPainterPath()
-            track_clip.addRoundedRect(bounds, 6.5, 6.5)
+            track_clip.addRoundedRect(bounds, 7.5, 7.5)
             painter.save()
             painter.setClipPath(track_clip)
             painter.drawRect(QRectF(0, 0, fill_width, bounds.height()))
@@ -102,7 +125,7 @@ class ProfileProgressBar(QProgressBar):
 
         painter.setPen(QColor(85, 135, 47))
         font = QFont("Noto Sans")
-        font.setPixelSize(7)
+        font.setPixelSize(9)
         font.setWeight(QFont.DemiBold)
         painter.setFont(font)
         if self.maximum() == 2000:
@@ -115,8 +138,8 @@ class ProfileProgressBar(QProgressBar):
 class ProfilePage(QWidget):
     """Native-size profile card using the provided frame as its background."""
 
-    WIDTH = 315
-    HEIGHT = 240
+    WIDTH = 382
+    HEIGHT = 290
     SCALE_X = WIDTH / 601
     SCALE_Y = HEIGHT / 458
 
@@ -164,10 +187,301 @@ class ProfilePage(QWidget):
 
         painter.setPen(QColor("#ffffff"))
         font = QFont(PROFILE_FONT)
-        font.setPixelSize(round(13 / self.SCALE_Y))
+        font.setPixelSize(round(15 / self.SCALE_Y))
         font.setBold(True)
         painter.setFont(font)
         painter.drawText(QRectF(57, 360, 168, 37), Qt.AlignCenter, "Lv.20  L Xu")
+
+
+class ShopItemCard(QWidget):
+    selected = Signal(str)
+
+    def __init__(self, item, asset_root, parent=None):
+        super().__init__(parent)
+        self.item_id, self.item_name, self.price, filename = item
+        self.pixmap = QPixmap(str(asset_root / "ShopItem" / filename))
+        self.is_selected = False
+        self.is_hovered = False
+        self.setFixedSize(56, 59)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):
+        self.is_hovered = True
+        self.update()
+
+    def leaveEvent(self, event):
+        self.is_hovered = False
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(
+            event.position().toPoint()
+        ):
+            self.selected.emit(self.item_id)
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        border = QColor("#f2c85c") if self.is_selected else QColor("#ffffff")
+        if self.is_hovered and not self.is_selected:
+            border = QColor("#f6dc9b")
+        painter.setPen(QPen(border, 2))
+        painter.setBrush(QColor("#fffaf0"))
+        painter.drawRoundedRect(QRectF(7, 5, 48, 53), 5, 5)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#f1e2bd"))
+        painter.drawRoundedRect(QRectF(12, 12, 38, 31), 5, 5)
+
+        if self.item_id == "apple":
+            image_rect = QRectF(19.1, 16.025, 23.8, 22.95)
+        else:
+            image_rect = QRectF(17, 14, 28, 27)
+        painter.drawPixmap(image_rect, self.pixmap, QRectF(self.pixmap.rect()))
+
+        painter.save()
+        painter.translate(15, 7)
+        painter.rotate(-15)
+        painter.translate(-13.95, -7.2)
+        ribbon = QPainterPath()
+        ribbon.moveTo(0, 3.6)
+        ribbon.lineTo(26.1, 0)
+        ribbon.lineTo(27.9, 10.8)
+        ribbon.lineTo(1.8, 14.4)
+        ribbon.closeSubpath()
+        painter.setBrush(QColor("#ca5900"))
+        painter.drawPath(ribbon)
+        font = QFont(PROFILE_FONT)
+        font.setPixelSize(9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(Qt.white)
+        painter.drawText(QRectF(1, 0.9, 26.1, 12.6), Qt.AlignCenter, f"¥{self.price}")
+        painter.restore()
+
+        font.setPixelSize(10)
+        font.setLetterSpacing(QFont.PercentageSpacing, 86)
+        painter.setFont(font)
+        painter.setPen(QColor("#775739"))
+        painter.drawText(QRectF(7, 44, 48, 15), Qt.AlignCenter, self.item_name)
+
+
+class ShopBackButton(QPushButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(58, 54)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pressed = self.isDown()
+
+        # Solid ochre shadow, yellow rim, and warm-white button face.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#9f7100"))
+        painter.drawEllipse(QRectF(7, 2, 48, 48))
+        painter.setBrush(QColor("#9f7100"))
+        painter.drawEllipse(QRectF(7, 1, 48, 48))
+        painter.setBrush(QColor("#f3bf19"))
+        painter.drawEllipse(QRectF(9, 3, 44, 44))
+        painter.setBrush(QColor("#fff8dd") if not pressed else QColor("#f5e8ba"))
+        painter.drawEllipse(QRectF(12.5, 6.5, 37, 37))
+
+        # Rounded arrow, centered on the circular button face.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#d99400"))
+        arrow = QPainterPath()
+        arrow.moveTo(17, 25)
+        arrow.quadTo(17, 24, 18, 23)
+        arrow.lineTo(28, 14)
+        arrow.quadTo(30, 12, 31, 14)
+        arrow.lineTo(31, 19)
+        arrow.lineTo(40, 19)
+        arrow.quadTo(42, 19, 42, 21)
+        arrow.lineTo(42, 29)
+        arrow.quadTo(42, 31, 40, 31)
+        arrow.lineTo(31, 31)
+        arrow.lineTo(31, 36)
+        arrow.quadTo(30, 38, 28, 36)
+        arrow.lineTo(18, 27)
+        arrow.quadTo(17, 26, 17, 25)
+        arrow.closeSubpath()
+        painter.translate(1.5, 0)
+        painter.drawPath(arrow)
+
+
+class ShopPurchaseButton(QPushButton):
+    def __init__(self, coin_path, parent=None):
+        super().__init__(parent)
+        self.price = 10
+        self.coin_pixmap = QPixmap(str(coin_path))
+        self.setFixedSize(151, 35)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_price(self, price):
+        self.price = int(price)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        if not self.isEnabled():
+            fill, border = QColor("#b8c98e"), QColor("#8fa461")
+        elif self.isDown():
+            fill, border = QColor("#73bd26"), QColor("#5c9d1b")
+        elif self.underMouse():
+            fill, border = QColor("#9be23b"), QColor("#79bd27")
+        else:
+            fill, border = QColor("#88d62f"), QColor("#68b11d")
+        painter.setPen(QPen(border, 2))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(QRectF(1, 1, 149, 33), 16, 16)
+        painter.drawPixmap(
+            QRectF(24, 8, 19, 19),
+            self.coin_pixmap,
+            QRectF(self.coin_pixmap.rect()),
+        )
+        font = QFont(PROFILE_FONT)
+        font.setPixelSize(16)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(Qt.white)
+        painter.drawText(
+            QRectF(43, 2, 92, 31),
+            Qt.AlignCenter,
+            f"¥ {self.price}  购买",
+        )
+
+
+class ShopPage(QWidget):
+    itemSelected = Signal(str)
+    purchaseRequested = Signal()
+    backRequested = Signal()
+    WIDTH = 430
+    HEIGHT = 290
+
+    def __init__(self, asset_root, parent=None):
+        super().__init__(parent)
+        self.asset_root = Path(asset_root)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self.selected_item_id = "apple"
+        self.coin_count = 0
+        self.total_items = 0
+        self.item_cards = {}
+        self.background = QPixmap(
+            str(self.asset_root / "ShopBackground.png")
+        )
+
+        self.back_button = ShopBackButton(self)
+        self.back_button.move(-17, 27)
+        self.back_button.clicked.connect(self.backRequested)
+
+        for index, item in enumerate(SHOP_ITEMS):
+            card = ShopItemCard(item, self.asset_root, self)
+            row_y = (60, 133, 204)[index // 3]
+            card.move(212 + (index % 3) * 64, row_y)
+            card.selected.connect(self.itemSelected)
+            self.item_cards[item[0]] = card
+
+        self.purchase_button = ShopPurchaseButton(
+            self.asset_root / "ShopButton" / "coin.png",
+            self,
+        )
+        self.purchase_button.move(33, 223)
+        self.purchase_button.clicked.connect(self.purchaseRequested)
+        self.select_item("apple")
+
+    def select_item(self, item_id):
+        if item_id not in SHOP_ITEM_MAP:
+            return
+        self.selected_item_id = item_id
+        for card_id, card in self.item_cards.items():
+            card.is_selected = card_id == item_id
+            card.update()
+        self.purchase_button.set_price(SHOP_ITEM_MAP[item_id][2])
+        self.update()
+
+    def set_economy(self, coin_count, total_items, can_buy):
+        self.coin_count = max(0, int(coin_count))
+        self.total_items = max(0, int(total_items))
+        self.purchase_button.setEnabled(bool(can_buy))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        background_height = (
+            self.width()
+            * self.background.height()
+            / self.background.width()
+        )
+        background_y = self.height() - background_height
+        painter.drawPixmap(
+            QRectF(0, background_y, self.width(), background_height),
+            self.background,
+            QRectF(self.background.rect()),
+        )
+
+        # Selected item preview.
+        painter.setBrush(QColor("#ffffff"))
+        painter.setPen(QPen(QColor("#d39c61"), 2))
+        painter.drawRoundedRect(QRectF(55, 72, 107, 107), 10, 10)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#f5ead2"))
+        painter.drawRoundedRect(QRectF(62, 80, 93, 83), 10, 10)
+        painter.setBrush(QColor("#f7d278"))
+        name_strip = QPainterPath()
+        name_strip.moveTo(62, 150)
+        name_strip.lineTo(155, 150)
+        name_strip.lineTo(155, 163)
+        name_strip.quadTo(155, 173, 145, 173)
+        name_strip.lineTo(72, 173)
+        name_strip.quadTo(62, 173, 62, 163)
+        name_strip.closeSubpath()
+        painter.drawPath(name_strip)
+
+        item = SHOP_ITEM_MAP[self.selected_item_id]
+        pixmap = QPixmap(str(self.asset_root / "ShopItem" / item[3]))
+        if self.selected_item_id == "apple":
+            preview_rect = QRectF(83.425, 90.35, 50.15, 49.3)
+        else:
+            preview_rect = QRectF(79, 86, 59, 58)
+        painter.drawPixmap(preview_rect, pixmap, QRectF(pixmap.rect()))
+        font = QFont(PROFILE_FONT)
+        font.setBold(True)
+        font.setPixelSize(15)
+        painter.setFont(font)
+        painter.setPen(QColor("#765637"))
+        painter.drawText(QRectF(63, 150, 91, 23), Qt.AlignCenter, item[1])
+
+        money_icon = QPixmap(str(self.asset_root / "StatusIcon" / "MoneyBag.png"))
+        bag_icon = QPixmap(str(self.asset_root / "StatusIcon" / "Bag.png"))
+        money_icon = money_icon.copy(10, 14, 59, 70)
+        bag_icon = bag_icon.copy(19, 14, 59, 66)
+        painter.setBrush(QColor("#a47a49"))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(QRectF(40, 187, 75, 25), 6, 6)
+        painter.drawRoundedRect(QRectF(119, 187, 58, 25), 6, 6)
+        painter.drawPixmap(
+            QRectF(46.7, 191.85, 12.6, 15.3),
+            money_icon,
+            QRectF(money_icon.rect()),
+        )
+        painter.drawPixmap(
+            QRectF(123.75, 191.85, 13.5, 15.3),
+            bag_icon,
+            QRectF(bag_icon.rect()),
+        )
+        font.setPixelSize(14)
+        painter.setFont(font)
+        painter.setPen(Qt.white)
+        painter.drawText(QRectF(61, 188, 51, 22), Qt.AlignCenter, f"¥ {self.coin_count}")
+        painter.drawText(QRectF(139, 188, 36, 22), Qt.AlignCenter, f"{self.total_items}个")
 
 
 class DesktopPet(QWidget):
@@ -241,6 +555,11 @@ class DesktopPet(QWidget):
         # 必须先创建 UI
         # 因为整点问候显示气泡时需要使用 pet_label
         self.setup_ui()
+        application = QApplication.instance()
+        if application is not None:
+            application.aboutToQuit.connect(
+                self.status_manager.save_status
+            )
 
         # UI 创建完成后，再启动整点问候
         self.hourly_greeting_manager = HourlyGreetingManager(
@@ -331,19 +650,19 @@ class DesktopPet(QWidget):
         ui_root = self.base_path / "assets" / "ui" / "profile"
         self.main_status_page = ProfilePage(ui_root)
         portrait = QLabel(self.main_status_page)
-        portrait.setGeometry(32, 90, 74, 94)
+        portrait.setGeometry(39, 109, 89, 113)
         portrait.setAlignment(Qt.AlignCenter)
         portrait.setPixmap(
             load_hidpi_pixmap(
                 ui_root / "Photo" / "Photo.png",
-                74,
-                94,
+                89,
+                113,
             )
         )
 
         for index in range(5):
             star = QLabel(self.main_status_page)
-            star.setGeometry(33 + index * 14, 174, 14, 14)
+            star.setGeometry(40 + index * 17, 210, 17, 17)
             star_name = (
                 "State=Filled.png" if index == 0 else "State=Empty.png"
             )
@@ -351,8 +670,8 @@ class DesktopPet(QWidget):
             star.setPixmap(
                 load_hidpi_pixmap(
                     ui_root / "star" / star_name,
-                    14,
-                    14,
+                    17,
+                    17,
                 )
             )
 
@@ -364,12 +683,12 @@ class DesktopPet(QWidget):
         ]
         self.profile_bars = {}
         for row, (key, text, icon_name, maximum, value) in enumerate(rows):
-            y = 84 + row * 20
+            y = 101 + row * 24
             icon = QLabel(self.main_status_page)
-            icon.setGeometry(126, y - 4, 29, 22)
+            icon.setGeometry(153, y - 4, 35, 26)
             icon.setAlignment(Qt.AlignCenter)
-            icon_height = 14 if key in {"EXP", "Mood"} else 18
-            icon_max_width = 23 if key in {"EXP", "Mood"} else 29
+            icon_height = 17 if key in {"EXP", "Mood"} else 22
+            icon_max_width = 28 if key in {"EXP", "Mood"} else 35
             icon.setPixmap(
                 load_hidpi_icon(
                     ui_root / "icons" / icon_name,
@@ -378,41 +697,41 @@ class DesktopPet(QWidget):
                 )
             )
             label = QLabel(text, self.main_status_page)
-            label.setGeometry(155, y - 2, 43, 19)
+            label.setGeometry(188, y - 2, 52, 23)
             label.setStyleSheet(
                 f"color:#80613c; font-family:'{PROFILE_FONT}'; "
-                "font-size:13px; font-weight:bold;"
+                "font-size:15px; font-weight:bold;"
             )
             bar = ProfileProgressBar(maximum, self.main_status_page)
-            bar.setGeometry(200, y, 90, 13)
+            bar.setGeometry(242, y, 109, 15)
             bar.setValue(value)
             self.profile_bars[key] = bar
         self.mood_bar = self.profile_bars["Mood"]
         self.hunger_bar = self.profile_bars["Food"]
 
         time_icon = QLabel(self.main_status_page)
-        time_icon.setGeometry(126, 160, 29, 22)
+        time_icon.setGeometry(153, 194, 35, 26)
         time_icon.setAlignment(Qt.AlignCenter)
         time_icon.setPixmap(
             load_hidpi_icon(
                 ui_root / "icons" / "Icon - Time.png",
-                height=19,
-                max_width=26,
+                height=23,
+                max_width=32,
             )
         )
         time_label = QLabel("陪伴时间", self.main_status_page)
-        time_label.setGeometry(155, 162, 58, 19)
+        time_label.setGeometry(188, 196, 70, 23)
         time_label.setAlignment(Qt.AlignCenter)
         time_label.setStyleSheet(
             f"color:#80613c; font-family:'{PROFILE_FONT}'; "
-            "font-size:13px; font-weight:bold;"
+            "font-size:15px; font-weight:bold;"
         )
         self.companion_label = QLabel(self.main_status_page)
-        self.companion_label.setGeometry(216, 162, 66, 19)
+        self.companion_label.setGeometry(262, 196, 80, 23)
         self.companion_label.setAlignment(Qt.AlignCenter)
         self.companion_label.setStyleSheet(
             f"color:#e46f61; font-family:'{PROFILE_FONT}'; "
-            "font-size:13px; font-weight:bold;"
+            "font-size:15px; font-weight:bold;"
         )
         self.update_companion_time()
         self.companion_timer = QTimer(self)
@@ -422,10 +741,10 @@ class DesktopPet(QWidget):
 
         self.shop_button = QPushButton("商店", self.main_status_page)
         self.shop_button.setObjectName("shopButton")
-        self.shop_button.setGeometry(135, 190, 68, 23)
+        self.shop_button.setGeometry(164, 230, 83, 28)
         self.feed_button = QPushButton("背包", self.main_status_page)
         self.feed_button.setObjectName("bagButton")
-        self.feed_button.setGeometry(213, 190, 68, 23)
+        self.feed_button.setGeometry(257, 230, 83, 28)
         self.feed_button.clicked.connect(self.open_food_page)
         self.shop_button.clicked.connect(self.open_shop_page)
 
@@ -434,42 +753,18 @@ class DesktopPet(QWidget):
         self.status_stack.addWidget(self.main_status_page)
 
         # 商店页面
-        self.shop_page = QWidget()
-        shop_layout = QVBoxLayout(self.shop_page)
-        shop_layout.setContentsMargins(0, 0, 0, 0)
-        shop_layout.setSpacing(7)
-
-        shop_title = QLabel("商店")
-        shop_title.setAlignment(Qt.AlignCenter)
-        self.shop_coin_label = QLabel()
-        self.shop_coin_label.setAlignment(Qt.AlignCenter)
-        shop_item_label = QLabel("🍎 苹果")
-        shop_item_label.setAlignment(Qt.AlignCenter)
-        shop_price_label = QLabel(f"价格：{APPLE_PRICE} 金币")
-        shop_price_label.setAlignment(Qt.AlignCenter)
-        self.shop_apple_count_label = QLabel()
-        self.shop_apple_count_label.setAlignment(Qt.AlignCenter)
-        self.shop_message_label = QLabel()
-        self.shop_message_label.setAlignment(Qt.AlignCenter)
-        self.buy_apple_button = QPushButton("购买")
-        self.shop_back_button = QPushButton("返回")
-
-        self.buy_apple_button.clicked.connect(
-            self.buy_apple_from_shop
+        shop_root = self.base_path / "assets" / "ui" / "shop"
+        self.shop_page = ShopPage(shop_root)
+        self.shop_page.itemSelected.connect(self.select_shop_item)
+        self.shop_page.purchaseRequested.connect(
+            self.buy_selected_shop_item
         )
-        self.shop_back_button.clicked.connect(
+        self.shop_page.backRequested.connect(
             self.show_main_status_page
         )
-
-        shop_layout.addWidget(shop_title)
-        shop_layout.addWidget(self.shop_coin_label)
-        shop_layout.addWidget(shop_item_label)
-        shop_layout.addWidget(shop_price_label)
-        shop_layout.addWidget(self.shop_apple_count_label)
-        shop_layout.addWidget(self.shop_message_label)
-        shop_layout.addWidget(self.buy_apple_button)
-        shop_layout.addWidget(self.shop_back_button)
         self.status_stack.addWidget(self.shop_page)
+        self.shop_page.back_button.setParent(self)
+        self.shop_page.back_button.hide()
 
         # 食物选择页面
         self.food_page = QWidget()
@@ -508,10 +803,10 @@ class DesktopPet(QWidget):
         self.status_panel_positioner = QWidget()
         self.status_panel_positioner.setFixedSize(
             ProfilePage.WIDTH,
-            ProfilePage.HEIGHT + 20,
+            ProfilePage.HEIGHT,
         )
         positioner_layout = QVBoxLayout(self.status_panel_positioner)
-        positioner_layout.setContentsMargins(0, 0, 0, 20)
+        positioner_layout.setContentsMargins(0, 0, 0, 0)
         positioner_layout.setSpacing(0)
         positioner_layout.addWidget(
             self.status_panel,
@@ -534,16 +829,16 @@ class DesktopPet(QWidget):
             QLabel {
                 color: #444444;
                 font-family: "乐米元气团团体";
-                font-size: 13px;
+                font-size: 15px;
             }
 
             QPushButton {
                 background-color: #ef7569;
                 color: white;
                 border: 2px solid #d95e52;
-                border-radius: 10px;
+                border-radius: 12px;
                 font-family: "乐米元气团团体";
-                font-size: 13px;
+                font-size: 15px;
                 font-weight: bold;
             }
 
@@ -846,26 +1141,23 @@ class DesktopPet(QWidget):
         interaction_enabled = not self.is_economy_interaction_locked()
 
         self.coin_label.setText(f"🪙 × {coin_count}")
-        self.shop_coin_label.setText(f"金币：{coin_count}")
-        self.shop_apple_count_label.setText(f"持有：{apple_count}")
         self.food_apple_count_label.setText(f"持有：{apple_count}")
 
         self.feed_button.setEnabled(interaction_enabled)
         self.shop_button.setEnabled(interaction_enabled)
-        self.buy_apple_button.setEnabled(
+        selected_id = self.shop_page.selected_item_id
+        selected_price = SHOP_ITEM_MAP[selected_id][2]
+        self.shop_page.set_economy(
+            coin_count,
+            manager.total_inventory_count(),
             interaction_enabled
-            and manager.can_afford(APPLE_PRICE)
+            and manager.can_afford(selected_price),
         )
         self.feed_apple_button.setEnabled(
             interaction_enabled
             and apple_count > 0
             and manager.hunger < 100
         )
-
-        if coin_count < APPLE_PRICE:
-            self.shop_message_label.setText("金币不足")
-        elif self.shop_message_label.text() == "金币不足":
-            self.shop_message_label.clear()
 
         if apple_count == 0:
             self.food_message_label.setText(
@@ -880,38 +1172,87 @@ class DesktopPet(QWidget):
             self.food_message_label.clear()
 
     def update_companion_time(self):
-        """Display elapsed time for the current application session."""
-        elapsed_minutes = max(0, self.session_elapsed.elapsed() // 60_000)
+        """Display persisted companionship plus the current session."""
+        elapsed_minutes = int(
+            self.get_total_companion_seconds() // 60
+        )
         self.companion_label.setText(f"{elapsed_minutes} 分钟")
+
+    def get_total_companion_seconds(self):
+        return max(
+            0.0,
+            self.status_manager.companion_seconds
+            + self.session_elapsed.elapsed() / 1000.0,
+        )
 
     def open_shop_page(self):
         if self.is_economy_interaction_locked():
             return
-        self.shop_message_label.clear()
         self.refresh_economy_ui()
+        self.resize_status_content(
+            ShopPage.WIDTH,
+            ShopPage.HEIGHT,
+        )
         self.status_stack.setCurrentWidget(self.shop_page)
+        self.main_layout.activate()
+        self.shop_page.back_button.move(
+            self.status_panel.mapTo(self, QPoint(-17, 27))
+        )
+        self.shop_page.back_button.show()
+        self.shop_page.back_button.raise_()
 
     def open_food_page(self):
         if self.is_economy_interaction_locked():
             return
+        self.shop_page.back_button.hide()
         self.food_message_label.clear()
         self.refresh_economy_ui()
+        self.resize_status_content(
+            ProfilePage.WIDTH,
+            ProfilePage.HEIGHT,
+        )
         self.status_stack.setCurrentWidget(self.food_page)
 
     def show_main_status_page(self):
         if self.is_economy_interaction_locked():
             return
+        self.shop_page.back_button.hide()
         self.refresh_economy_ui()
+        self.resize_status_content(
+            ProfilePage.WIDTH,
+            ProfilePage.HEIGHT,
+        )
         self.status_stack.setCurrentWidget(self.main_status_page)
 
-    def buy_apple_from_shop(self):
+    def resize_status_content(self, width, height):
+        """Resize a stacked page while keeping the pet fixed on screen."""
+        pet_global_position = self.pet_label.mapToGlobal(QPoint(0, 0))
+        self.status_stack.setFixedSize(width, height)
+        self.status_panel.setFixedSize(width, height)
+        self.status_panel_positioner.setFixedSize(width, height)
+        if self.status_panel.isVisible():
+            self.setFixedSize(
+                self.pet_size + width + 16,
+                max(self.pet_size, height) + 16,
+            )
+            self.preserve_pet_global_position(pet_global_position)
+            self.dialogue_manager.update_position()
+            self.keep_inside_screen()
+
+    def select_shop_item(self, item_id):
+        self.shop_page.select_item(item_id)
+        self.refresh_economy_ui()
+
+    def buy_selected_shop_item(self):
         if self.is_economy_interaction_locked():
             return
-        purchase_succeeded = self.status_manager.buy_apple()
-        self.refresh_economy_ui()
-        self.shop_message_label.setText(
-            "购买成功" if purchase_succeeded else "金币不足"
+        item_id = self.shop_page.selected_item_id
+        price = SHOP_ITEM_MAP[item_id][2]
+        self.status_manager.buy_item(
+            item_id,
+            price,
         )
+        self.refresh_economy_ui()
 
     def feed_apple_from_food(self):
         if self.is_economy_interaction_locked():
@@ -931,17 +1272,22 @@ class DesktopPet(QWidget):
         """进入 work 时收起状态栏，不触发普通交互逻辑。"""
         if not self.status_panel.isVisible():
             return
+        self.shop_page.back_button.hide()
+        pet_global_position = self.pet_label.mapToGlobal(QPoint(0, 0))
         self.status_panel.hide()
         self.status_panel_positioner.hide()
         self.status_stack.setCurrentWidget(self.main_status_page)
         self.setFixedSize(self.pet_size + 16, self.pet_size + 16)
+        self.preserve_pet_global_position(pet_global_position)
         self.dialogue_manager.update_position()
         self.keep_inside_screen()
 
     def toggle_status_panel(self):
         if self.is_economy_interaction_locked():
             return
+        pet_global_position = self.pet_label.mapToGlobal(QPoint(0, 0))
         if self.status_panel.isVisible():
+            self.shop_page.back_button.hide()
             self.status_panel.hide()
             self.status_panel_positioner.hide()
             self.setFixedSize(self.pet_size + 16, self.pet_size + 16)
@@ -953,13 +1299,24 @@ class DesktopPet(QWidget):
                 self.pet_size + ProfilePage.WIDTH + 16,
                 max(
                     self.pet_size,
-                    ProfilePage.HEIGHT + 20,
+                    ProfilePage.HEIGHT,
                 ) + 16,
             )
 
+        self.preserve_pet_global_position(pet_global_position)
         self.dialogue_manager.update_position()
 
         self.keep_inside_screen()
+
+    def preserve_pet_global_position(self, previous_global_position):
+        """Compensate window resizing so the pet stays still on screen."""
+        self.main_layout.activate()
+        current_global_position = self.pet_label.mapToGlobal(QPoint(0, 0))
+        self.move(
+            self.pos()
+            + previous_global_position
+            - current_global_position
+        )
 
     def is_interaction_locked(self):
         return self.animation_manager.is_interaction_locked()

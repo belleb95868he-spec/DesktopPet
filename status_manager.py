@@ -1,11 +1,23 @@
 import json
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
 
 DEFAULT_COIN_COUNT = 30
 DEFAULT_APPLE_COUNT = 3
-APPLE_PRICE = 3
+APPLE_PRICE = 10
+SHOP_PRICES = {
+    "ice": 3,
+    "sausage": 6,
+    "apple": 10,
+    "milk": 12,
+    "bread": 20,
+    "milktea": 25,
+    "drink": 30,
+    "ramen": 40,
+    "salad": 45,
+}
 
 
 class StatusManager:
@@ -19,6 +31,12 @@ class StatusManager:
         self.mood = 100
         self.coin_count = DEFAULT_COIN_COUNT
         self.apple_count = DEFAULT_APPLE_COUNT
+        self.inventory = {
+            item_id: 0
+            for item_id in SHOP_PRICES
+            if item_id != "apple"
+        }
+        self.companion_seconds = 0.0
         self.load_status()
 
         self.status_timer = QTimer(self.pet)
@@ -159,20 +177,40 @@ class StatusManager:
 
     def buy_apple(self):
         """一次性完成扣金币和增加库存，避免半笔交易。"""
+        return self.buy_item("apple", APPLE_PRICE)
+
+    def buy_item(self, item_id, price=None):
+        """Purchase any shop item and persist its inventory count."""
         if self.pet.is_economy_interaction_locked():
             return False
-        if not self.can_afford(APPLE_PRICE):
+        if item_id not in SHOP_PRICES:
+            return False
+        item_price = SHOP_PRICES[item_id] if price is None else int(price)
+        if not self.can_afford(item_price):
             self.pet.dialogue_manager.show_message(
                 "金币不够，完成一次工作可以获得 10 金币。"
             )
             return False
 
-        self.coin_count -= APPLE_PRICE
-        self.apple_count += 1
+        self.coin_count -= item_price
+        if item_id == "apple":
+            self.apple_count += 1
+        else:
+            self.inventory[item_id] = self.inventory.get(item_id, 0) + 1
         self.update_ui()
         self.save_status()
-        self.pet.dialogue_manager.show_message("获得了 1 个苹果 🍎")
         return True
+
+    def get_item_count(self, item_id):
+        if item_id == "apple":
+            return max(0, self.apple_count)
+        return max(0, self.inventory.get(item_id, 0))
+
+    def total_inventory_count(self):
+        return sum(
+            self.get_item_count(item_id)
+            for item_id in SHOP_PRICES
+        )
 
     def reduce_status(self):
         self.hunger = max(0, self.hunger - 1)
@@ -267,6 +305,31 @@ class StatusManager:
                 data.get("apple_count", DEFAULT_APPLE_COUNT),
                 DEFAULT_APPLE_COUNT,
             )
+            saved_inventory = data.get("inventory", {})
+            if isinstance(saved_inventory, dict):
+                for item_id in self.inventory:
+                    self.inventory[item_id] = self.safe_nonnegative_int(
+                        saved_inventory.get(item_id, 0),
+                        0,
+                    )
+                if "apple" in saved_inventory:
+                    self.apple_count = self.safe_nonnegative_int(
+                        saved_inventory.get("apple"),
+                        self.apple_count,
+                    )
+            self.companion_seconds = self.safe_nonnegative_float(
+                data.get("companion_seconds", 0),
+                0.0,
+            )
+            cooldown_epoch = self.safe_nonnegative_float(
+                data.get("work_cooldown_until_epoch", 0),
+                0.0,
+            )
+            cooldown_remaining = max(0.0, cooldown_epoch - time.time())
+            if cooldown_remaining > 0:
+                self.pet.animation_manager.work_cooldown_until = (
+                    time.monotonic() + cooldown_remaining
+                )
 
         except (
             OSError,
@@ -279,6 +342,12 @@ class StatusManager:
             self.mood = 100
             self.coin_count = DEFAULT_COIN_COUNT
             self.apple_count = DEFAULT_APPLE_COUNT
+            self.inventory = {
+                item_id: 0
+                for item_id in SHOP_PRICES
+                if item_id != "apple"
+            }
+            self.companion_seconds = 0.0
 
     @staticmethod
     def safe_nonnegative_int(value, default):
@@ -287,12 +356,39 @@ class StatusManager:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def safe_nonnegative_float(value, default):
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return default
+
     def save_status(self):
+        cooldown_remaining = max(
+            0.0,
+            self.pet.animation_manager.work_cooldown_until
+            - time.monotonic(),
+        )
+        companionship = (
+            self.pet.get_total_companion_seconds()
+            if hasattr(self.pet, "get_total_companion_seconds")
+            else self.companion_seconds
+        )
         data = {
             "hunger": self.hunger,
             "mood": self.mood,
             "coin_count": max(0, self.coin_count),
             "apple_count": max(0, self.apple_count),
+            "inventory": {
+                item_id: self.get_item_count(item_id)
+                for item_id in SHOP_PRICES
+            },
+            "companion_seconds": max(0.0, companionship),
+            "work_cooldown_until_epoch": (
+                time.time() + cooldown_remaining
+                if cooldown_remaining > 0
+                else 0
+            ),
         }
 
         try:
