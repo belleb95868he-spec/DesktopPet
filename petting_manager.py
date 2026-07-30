@@ -22,12 +22,12 @@ class PettingManager:
         self.reset_timer.timeout.connect(self.reset_clicks)
 
         self.messages = [
-            "被摸摸了，好开心！✨",
-            "嘿嘿，再摸一下也可以～",
+            "嗯？怎么了？",
+            "有什么好事吗？",
             "头发没有乱掉吧？",
-            "别、别摸这么快啦……///",
-            "等一下！突然这样会害羞的……",
-            "呜……心跳都变快了！",
+            "好啦好啦",
+            "怎么突然摸我的大头",
+            "我在我在",
         ]
 
     def is_head_position(self, local_position):

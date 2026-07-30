@@ -1,4 +1,5 @@
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -388,7 +389,7 @@ class ShopPage(QWidget):
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.selected_item_id = "apple"
         self.coin_count = 0
-        self.total_items = 0
+        self.selected_item_count = 0
         self.item_cards = {}
         self.preview_drag_start = QPoint()
         self.preview_drag_armed = False
@@ -425,9 +426,9 @@ class ShopPage(QWidget):
         self.purchase_button.set_price(SHOP_ITEM_MAP[item_id][2])
         self.update()
 
-    def set_economy(self, coin_count, total_items, can_buy):
+    def set_economy(self, coin_count, selected_item_count, can_buy):
         self.coin_count = max(0, int(coin_count))
-        self.total_items = max(0, int(total_items))
+        self.selected_item_count = max(0, int(selected_item_count))
         self.purchase_button.setEnabled(bool(can_buy))
         self.update()
 
@@ -550,7 +551,11 @@ class ShopPage(QWidget):
         painter.setFont(font)
         painter.setPen(Qt.white)
         painter.drawText(QRectF(61, 188, 51, 22), Qt.AlignCenter, f"¥ {self.coin_count}")
-        painter.drawText(QRectF(139, 188, 36, 22), Qt.AlignCenter, f"{self.total_items}个")
+        painter.drawText(
+            QRectF(139, 188, 36, 22),
+            Qt.AlignCenter,
+            f"{self.selected_item_count}个",
+        )
 
 
 class DesktopPet(QWidget):
@@ -558,16 +563,34 @@ class DesktopPet(QWidget):
         super().__init__()
 
         global PROFILE_FONT
-        font_path = Path.home() / "Library" / "Fonts" / "乐米元气团团体.ttf"
-        if font_path.exists():
+        self.base_path = Path(__file__).resolve().parent
+        font_candidates = (
+            self.base_path / "assets" / "fonts" / "乐米元气团团体.ttf",
+            Path.home() / "Library" / "Fonts" / "乐米元气团团体.ttf",
+        )
+        font_path = next(
+            (path for path in font_candidates if path.exists()),
+            None,
+        )
+        if font_path is not None:
             font_id = QFontDatabase.addApplicationFont(str(font_path))
             families = QFontDatabase.applicationFontFamilies(font_id)
             if families:
                 PROFILE_FONT = families[0]
 
         self.pet_size = 250
-        self.base_path = Path(__file__).resolve().parent
-        self.save_path = self.base_path / "pet_status.json"
+        if sys.platform == "win32":
+            app_data_root = Path(
+                os.environ.get(
+                    "APPDATA",
+                    Path.home() / "AppData" / "Roaming",
+                )
+            )
+            save_directory = app_data_root / "DesktopPet"
+            save_directory.mkdir(parents=True, exist_ok=True)
+            self.save_path = save_directory / "pet_status.json"
+        else:
+            self.save_path = self.base_path / "pet_status.json"
 
         self.setWindowFlags(
             Qt.Window
@@ -1118,6 +1141,7 @@ class DesktopPet(QWidget):
             SHOP_HUNGER_VALUES[item_id],
             SHOP_ITEM_MAP[item_id][1],
         ):
+            self.animation_manager.start_eating()
             self.show_pet_hunger_overlay()
             self.show_hunger_gain_text(
                 self.status_manager.last_feed_amount
@@ -1252,6 +1276,9 @@ class DesktopPet(QWidget):
 
             elif event.type() == QEvent.MouseMove:
                 if event.buttons() & Qt.LeftButton:
+                    if self.animation_manager.current_state == "eat":
+                        event.accept()
+                        return True
                     if self.petting_click_active:
                         event.accept()
                         return True
@@ -1490,7 +1517,7 @@ class DesktopPet(QWidget):
         selected_price = SHOP_ITEM_MAP[selected_id][2]
         self.shop_page.set_economy(
             coin_count,
-            manager.total_inventory_count(),
+            manager.get_item_count(selected_id),
             interaction_enabled
             and manager.can_afford(selected_price),
         )

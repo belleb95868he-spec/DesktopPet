@@ -30,6 +30,7 @@ HUNGRY_THRESHOLD = 30
 HUNGRY_FRAME_INTERVAL_MS = 47
 HUNGRY_COOLDOWN_MS = 30 * 1000
 PETTING_FRAME_INTERVAL_MS = 47
+EAT_FRAME_INTERVAL_MS = 33
 
 
 class AnimationManager:
@@ -166,6 +167,17 @@ class AnimationManager:
             )
             for frame in self.petting_frames_left
         ]
+        self.eat_frames_left = self.load_animation_frames(
+            self.base_path / "assets" / "eat",
+            "eat_*.png",
+        )
+        self.eat_frames_right = [
+            frame.transformed(
+                QTransform().scale(-1, 1),
+                Qt.SmoothTransformation,
+            )
+            for frame in self.eat_frames_left
+        ]
 
         self.idle_index = 0
         self.blink_index = 0
@@ -178,6 +190,7 @@ class AnimationManager:
         print(f"Sing 帧数：{len(self.sing_frames)}")
         print(f"Hungry 帧数：{len(self.hungry_frames_left)}")
         print(f"Petting 帧数：{len(self.petting_frames_left)}")
+        print(f"Eat 帧数：{len(self.eat_frames_left)}")
 
         self.idle_interval = 70
         self.blink_interval = 80
@@ -207,6 +220,11 @@ class AnimationManager:
         self.petting_timer.setInterval(PETTING_FRAME_INTERVAL_MS)
         self.petting_timer.setTimerType(Qt.PreciseTimer)
         self.petting_timer.timeout.connect(self.play_petting_frame)
+
+        self.eat_timer = QTimer(self.pet)
+        self.eat_timer.setInterval(EAT_FRAME_INTERVAL_MS)
+        self.eat_timer.setTimerType(Qt.PreciseTimer)
+        self.eat_timer.timeout.connect(self.play_eat_frame)
 
         self.action_timer = QTimer(self.pet)
         self.action_timer.setSingleShot(True)
@@ -251,6 +269,7 @@ class AnimationManager:
         self.hungry_loops_remaining = 0
         self.hungry_cooldown_until = 0.0
         self.petting_index = 0
+        self.eat_index = 0
 
         self.saved_state = None
 
@@ -700,14 +719,14 @@ class AnimationManager:
             self.schedule_next_action()
 
     def is_interaction_locked(self):
-        return self.current_state in {"work", "petting"}
+        return self.current_state in {"work", "petting", "eat"}
 
     def is_petting(self):
         return self.current_state == "petting"
 
     def start_petting(self):
         """立即切换到摸头动画；播放期间不会重复启动或排队。"""
-        if self.current_state in {"work", "petting"}:
+        if self.current_state in {"work", "petting", "eat"}:
             return False
         if not self.petting_frames_left:
             return False
@@ -761,6 +780,62 @@ class AnimationManager:
         self.idle_timer.start(self.idle_interval)
         if hasattr(self.pet, "refresh_economy_ui"):
             self.pet.refresh_economy_ui()
+        self.schedule_next_action()
+        return True
+
+    def start_eating(self):
+        """Play one complete eating animation without allowing restarts."""
+        if self.current_state in {"work", "petting", "eat"}:
+            return False
+        if not self.eat_frames_left:
+            return False
+
+        was_hungry = self.current_state == "hungry"
+        self.action_timer.stop()
+        self.idle_timer.stop()
+        self.blink_timer.stop()
+        self.walk_timer.stop()
+        self.sing_timer.stop()
+        self.hungry_timer.stop()
+        if was_hungry:
+            self.start_hungry_cooldown()
+
+        self.current_state = "eat"
+        self.last_action = "eat"
+        self.eat_index = 0
+        self.pet.pet_label.setPixmap(self.get_eat_frame(0))
+        self.eat_index = 1
+        self.eat_timer.start()
+        return True
+
+    def get_eat_frame(self, frame_index):
+        if self.facing_direction == 1:
+            return self.eat_frames_right[frame_index]
+        return self.eat_frames_left[frame_index]
+
+    def play_eat_frame(self):
+        if self.current_state != "eat":
+            self.eat_timer.stop()
+            return
+        if self.eat_index < len(self.eat_frames_left):
+            self.pet.pet_label.setPixmap(
+                self.get_eat_frame(self.eat_index)
+            )
+            self.eat_index += 1
+            return
+        self.finish_eating()
+
+    def finish_eating(self):
+        if self.current_state != "eat":
+            return False
+        self.eat_timer.stop()
+        self.current_state = "idle"
+        self.last_action = "eat"
+        self.eat_index = 0
+        self.idle_index = 0
+        if self.idle_frames:
+            self.pet.pet_label.setPixmap(self.get_idle_frame(0))
+        self.idle_timer.start(self.idle_interval)
         self.schedule_next_action()
         return True
 
