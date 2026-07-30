@@ -346,6 +346,13 @@ class DialogueManager:
         # 数值越大，气泡越往下
         self.head_offset = 0
 
+        # 饱腹进度条与气泡同时显示时，为进度条让出的高度。
+        self.stacked_offset = 0
+
+    def set_stacked_offset(self, offset):
+        self.stacked_offset = max(0, int(offset))
+        self.update_position()
+
     def show_message(
         self,
         text,
@@ -421,9 +428,13 @@ class DialogueManager:
             + self.head_offset
             - bubble.height()
             - self.distance
+            - self.stacked_offset
         )
 
         bubble.move(
             x,
             y
         )
+
+        if hasattr(self.pet, "update_pet_hunger_overlay_position"):
+            self.pet.update_pet_hunger_overlay_position()

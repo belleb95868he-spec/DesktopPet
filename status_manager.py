@@ -37,6 +37,7 @@ class StatusManager:
             if item_id != "apple"
         }
         self.companion_seconds = 0.0
+        self.last_feed_amount = 0
         self.load_status()
 
         self.status_timer = QTimer(self.pet)
@@ -97,6 +98,57 @@ class StatusManager:
             self.update_ui()
             self.save_status()
             print(f"喂食苹果失败，已回滚：{error}")
+            return False
+
+    def feed_shop_item(self, item_id, hunger_amount, item_name):
+        """Consume a dragged shop item and apply its hunger value."""
+        self.last_feed_amount = 0
+        if self.pet.is_economy_interaction_locked():
+            return False
+        if item_id not in SHOP_PRICES:
+            return False
+        if self.get_item_count(item_id) <= 0:
+            self.pet.dialogue_manager.show_message(
+                f"没有{item_name}了，先去商店购买吧。"
+            )
+            return False
+        if self.hunger >= 100:
+            self.pet.dialogue_manager.show_message("已经吃得饱饱的啦～")
+            return False
+
+        previous_hunger = self.hunger
+        previous_mood = self.mood
+        previous_count = self.get_item_count(item_id)
+        try:
+            if item_id == "apple":
+                self.apple_count -= 1
+            else:
+                self.inventory[item_id] = previous_count - 1
+            applied_amount = min(
+                max(0, int(hunger_amount)),
+                100 - self.hunger,
+            )
+            self.last_feed_amount = applied_amount
+            self.hunger += applied_amount
+            self.mood = min(100, self.mood + 5)
+            self.pet.animation_manager.stop_hungry_after_feeding()
+            self.update_ui()
+            self.save_status()
+            self.pet.dialogue_manager.show_message(
+                f"吃掉了{item_name}，饱腹增加 {applied_amount}%"
+            )
+            return True
+        except Exception as error:
+            self.last_feed_amount = 0
+            self.hunger = previous_hunger
+            self.mood = previous_mood
+            if item_id == "apple":
+                self.apple_count = previous_count
+            else:
+                self.inventory[item_id] = previous_count
+            self.update_ui()
+            self.save_status()
+            print(f"拖拽喂食失败，已回滚：{error}")
             return False
 
     def touch_pet(self):

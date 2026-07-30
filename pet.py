@@ -4,8 +4,12 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QElapsedTimer,
+    QEasingCurve,
     QPoint,
     QEvent,
+    QMimeData,
+    QParallelAnimationGroup,
+    QPropertyAnimation,
     QRectF,
     Qt,
     QTimer,
@@ -16,6 +20,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QFontDatabase,
+    QDrag,
     QGuiApplication,
     QLinearGradient,
     QPainter,
@@ -26,6 +31,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -59,6 +65,18 @@ SHOP_ITEM_MAP = {
     item[0]: item
     for item in SHOP_ITEMS
 }
+SHOP_HUNGER_VALUES = {
+    "ice": 3,
+    "sausage": 6,
+    "apple": 10,
+    "milk": 12,
+    "bread": 20,
+    "milktea": 15,
+    "drink": 8,
+    "ramen": 30,
+    "salad": 25,
+}
+SHOP_DRAG_MIME = "application/x-desktop-pet-shop-item"
 
 
 def load_hidpi_pixmap(path, width, height):
@@ -372,6 +390,8 @@ class ShopPage(QWidget):
         self.coin_count = 0
         self.total_items = 0
         self.item_cards = {}
+        self.preview_drag_start = QPoint()
+        self.preview_drag_armed = False
         self.background = QPixmap(
             str(self.asset_root / "ShopBackground.png")
         )
@@ -410,6 +430,55 @@ class ShopPage(QWidget):
         self.total_items = max(0, int(total_items))
         self.purchase_button.setEnabled(bool(can_buy))
         self.update()
+
+    def mousePressEvent(self, event):
+        if (
+            event.button() == Qt.LeftButton
+            and QRectF(55, 72, 107, 107).contains(event.position())
+        ):
+            self.preview_drag_start = event.position().toPoint()
+            self.preview_drag_armed = True
+            event.accept()
+            return
+        self.preview_drag_armed = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            not self.preview_drag_armed
+            or not (event.buttons() & Qt.LeftButton)
+        ):
+            super().mouseMoveEvent(event)
+            return
+        if (
+            event.position().toPoint() - self.preview_drag_start
+        ).manhattanLength() < QApplication.startDragDistance():
+            event.accept()
+            return
+
+        item = SHOP_ITEM_MAP[self.selected_item_id]
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        mime_data.setData(
+            SHOP_DRAG_MIME,
+            self.selected_item_id.encode("utf-8"),
+        )
+        drag.setMimeData(mime_data)
+        drag_pixmap = load_hidpi_pixmap(
+            self.asset_root / "ShopItem" / item[3],
+            48,
+            48,
+        )
+        drag.setPixmap(drag_pixmap)
+        drag.setHotSpot(QPoint(24, 24))
+        drag.exec(Qt.CopyAction)
+        self.preview_drag_start = QPoint()
+        self.preview_drag_armed = False
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.preview_drag_armed = False
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -510,6 +579,7 @@ class DesktopPet(QWidget):
         self.setAttribute(
             Qt.WA_TranslucentBackground
         )
+        self.setAcceptDrops(True)
 
         self.drag_start_global = QPoint()
         self.window_start_position = QPoint()
@@ -632,6 +702,96 @@ class DesktopPet(QWidget):
         self.main_layout.addWidget(self.pet_label, alignment=Qt.AlignBottom)
 
         self.lifted_pixmap = self.load_lifted_pixmap()
+
+        self.pet_hunger_overlay = QProgressBar(None)
+        self.pet_hunger_overlay.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus
+        )
+        self.pet_hunger_overlay.setAttribute(Qt.WA_TranslucentBackground)
+        self.pet_hunger_overlay.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.pet_hunger_overlay.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.pet_hunger_overlay.setAttribute(
+            Qt.WA_TransparentForMouseEvents
+        )
+        self.pet_hunger_overlay.setRange(0, 100)
+        self.pet_hunger_overlay.setFixedSize(120, 15)
+        self.pet_hunger_overlay.setAlignment(Qt.AlignCenter)
+        self.pet_hunger_overlay.setTextVisible(True)
+        self.pet_hunger_overlay.setStyleSheet(
+            """
+            QProgressBar {
+                color: #557f2f;
+                background: #e2d8c8;
+                border: 1px solid #ffffff;
+                border-radius: 7px;
+                font-family: "Noto Sans";
+                font-size: 8px;
+                font-weight: 600;
+            }
+            QProgressBar::chunk {
+                background: #94d936;
+                border-radius: 6px;
+            }
+            """
+        )
+        self.pet_hunger_overlay.hide()
+        self.pet_hunger_overlay_timer = QTimer(self)
+        self.pet_hunger_overlay_timer.setSingleShot(True)
+        self.pet_hunger_overlay_timer.setInterval(2000)
+        self.pet_hunger_overlay_timer.timeout.connect(
+            self.hide_pet_hunger_overlay
+        )
+
+        self.hunger_gain_label = QLabel(self)
+        self.hunger_gain_label.setFixedSize(100, 28)
+        self.hunger_gain_label.setAlignment(Qt.AlignCenter)
+        self.hunger_gain_label.setAttribute(
+            Qt.WA_TransparentForMouseEvents
+        )
+        self.hunger_gain_label.setStyleSheet(
+            f"""
+            color: #79bd27;
+            background: transparent;
+            font-family: "{PROFILE_FONT}";
+            font-size: 16px;
+            font-weight: bold;
+            """
+        )
+        self.hunger_gain_opacity = QGraphicsOpacityEffect(
+            self.hunger_gain_label
+        )
+        self.hunger_gain_label.setGraphicsEffect(
+            self.hunger_gain_opacity
+        )
+        self.hunger_gain_animation = QParallelAnimationGroup(self)
+        self.hunger_gain_move_animation = QPropertyAnimation(
+            self.hunger_gain_label,
+            b"pos",
+        )
+        self.hunger_gain_move_animation.setDuration(1200)
+        self.hunger_gain_move_animation.setEasingCurve(
+            QEasingCurve.OutCubic
+        )
+        self.hunger_gain_fade_animation = QPropertyAnimation(
+            self.hunger_gain_opacity,
+            b"opacity",
+        )
+        self.hunger_gain_fade_animation.setDuration(1200)
+        self.hunger_gain_fade_animation.setStartValue(1.0)
+        self.hunger_gain_fade_animation.setEndValue(0.0)
+        self.hunger_gain_animation.addAnimation(
+            self.hunger_gain_move_animation
+        )
+        self.hunger_gain_animation.addAnimation(
+            self.hunger_gain_fade_animation
+        )
+        self.hunger_gain_animation.finished.connect(
+            self.hunger_gain_label.hide
+        )
+        self.hunger_gain_label.hide()
 
         # ==================================================
         # 状态面板
@@ -871,6 +1031,100 @@ class DesktopPet(QWidget):
     # ==================================================
     # 鼠标与菜单
     # ==================================================
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(SHOP_DRAG_MIME):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if (
+            event.mimeData().hasFormat(SHOP_DRAG_MIME)
+            and self.pet_label.geometry().contains(
+                event.position().toPoint()
+            )
+        ):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event):
+        if (
+            not event.mimeData().hasFormat(SHOP_DRAG_MIME)
+            or not self.pet_label.geometry().contains(
+                event.position().toPoint()
+            )
+        ):
+            event.ignore()
+            return
+        item_id = bytes(
+            event.mimeData().data(SHOP_DRAG_MIME)
+        ).decode("utf-8")
+        if item_id not in SHOP_ITEM_MAP:
+            event.ignore()
+            return
+        if self.status_manager.feed_shop_item(
+            item_id,
+            SHOP_HUNGER_VALUES[item_id],
+            SHOP_ITEM_MAP[item_id][1],
+        ):
+            self.show_pet_hunger_overlay()
+            self.show_hunger_gain_text(
+                self.status_manager.last_feed_amount
+            )
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def show_pet_hunger_overlay(self):
+        self.pet_hunger_overlay.setValue(self.status_manager.hunger)
+        self.pet_hunger_overlay.setFormat(
+            f"饱腹 {self.status_manager.hunger}%"
+        )
+        self.update_pet_hunger_overlay_position()
+        self.dialogue_manager.set_stacked_offset(
+            self.pet_hunger_overlay.height() + 4
+        )
+        self.update_pet_hunger_overlay_position()
+        self.pet_hunger_overlay.show()
+        self.pet_hunger_overlay.raise_()
+        self.pet_hunger_overlay_timer.start()
+
+    def update_pet_hunger_overlay_position(self):
+        if not hasattr(self, "pet_hunger_overlay"):
+            return
+        pet_position = self.pet_label.mapToGlobal(QPoint(0, 0))
+        self.pet_hunger_overlay.move(
+            pet_position.x()
+            + (self.pet_label.width() - self.pet_hunger_overlay.width()) // 2,
+            pet_position.y() - self.pet_hunger_overlay.height(),
+        )
+
+    def hide_pet_hunger_overlay(self):
+        self.pet_hunger_overlay.hide()
+        self.dialogue_manager.set_stacked_offset(0)
+
+    def show_hunger_gain_text(self, amount):
+        amount = max(0, int(amount))
+        if amount <= 0:
+            return
+        self.main_layout.activate()
+        pet_position = self.pet_label.mapTo(self, QPoint(0, 0))
+        start_position = QPoint(
+            pet_position.x() + self.pet_label.width() // 2 + 28,
+            pet_position.y() + self.pet_label.height() // 2 - 14,
+        )
+        end_position = start_position + QPoint(0, -60)
+        self.hunger_gain_animation.stop()
+        self.hunger_gain_label.setText(f"饱腹 +{amount}%")
+        self.hunger_gain_opacity.setOpacity(1.0)
+        self.hunger_gain_label.move(start_position)
+        self.hunger_gain_label.show()
+        self.hunger_gain_label.raise_()
+        self.hunger_gain_move_animation.setStartValue(start_position)
+        self.hunger_gain_move_animation.setEndValue(end_position)
+        self.hunger_gain_animation.start()
 
     def eventFilter(
         self,
