@@ -793,6 +793,55 @@ class DesktopPet(QWidget):
         )
         self.hunger_gain_label.hide()
 
+        self.work_coin_gain_label = QLabel(self)
+        self.work_coin_gain_label.setFixedSize(100, 28)
+        self.work_coin_gain_label.setAlignment(Qt.AlignCenter)
+        self.work_coin_gain_label.setAttribute(
+            Qt.WA_TransparentForMouseEvents
+        )
+        self.work_coin_gain_label.setStyleSheet(
+            f"""
+            color: #f2b51d;
+            background: transparent;
+            font-family: "{PROFILE_FONT}";
+            font-size: 16px;
+            font-weight: bold;
+            """
+        )
+        self.work_coin_gain_opacity = QGraphicsOpacityEffect(
+            self.work_coin_gain_label
+        )
+        self.work_coin_gain_label.setGraphicsEffect(
+            self.work_coin_gain_opacity
+        )
+        self.work_coin_gain_animation = QParallelAnimationGroup(self)
+        self.work_coin_gain_move_animation = QPropertyAnimation(
+            self.work_coin_gain_label,
+            b"pos",
+        )
+        self.work_coin_gain_move_animation.setDuration(1200)
+        self.work_coin_gain_move_animation.setEasingCurve(
+            QEasingCurve.OutCubic
+        )
+        self.work_coin_gain_fade_animation = QPropertyAnimation(
+            self.work_coin_gain_opacity,
+            b"opacity",
+        )
+        self.work_coin_gain_fade_animation.setDuration(1200)
+        self.work_coin_gain_fade_animation.setStartValue(1.0)
+        self.work_coin_gain_fade_animation.setEndValue(0.0)
+        self.work_coin_gain_animation.addAnimation(
+            self.work_coin_gain_move_animation
+        )
+        self.work_coin_gain_animation.addAnimation(
+            self.work_coin_gain_fade_animation
+        )
+        self.work_coin_gain_animation.finished.connect(
+            self.work_coin_gain_label.hide
+        )
+        self.work_coin_gain_label.hide()
+        self.work_coin_gain_next_on_left = True
+
         # ==================================================
         # 状态面板
         # ==================================================
@@ -1125,6 +1174,44 @@ class DesktopPet(QWidget):
         self.hunger_gain_move_animation.setStartValue(start_position)
         self.hunger_gain_move_animation.setEndValue(end_position)
         self.hunger_gain_animation.start()
+
+    def show_work_coin_gain(self, amount):
+        amount = max(0, int(amount))
+        if amount <= 0:
+            return
+        self.main_layout.activate()
+        pet_position = self.pet_label.mapTo(self, QPoint(0, 0))
+        if self.work_coin_gain_next_on_left:
+            x = pet_position.x() + 4
+        else:
+            x = (
+                pet_position.x()
+                + self.pet_label.width()
+                - self.work_coin_gain_label.width()
+                - 4
+            )
+        start_position = QPoint(
+            x,
+            pet_position.y() + self.pet_label.height() // 2 - 14,
+        )
+        end_position = start_position + QPoint(0, -60)
+        self.work_coin_gain_next_on_left = (
+            not self.work_coin_gain_next_on_left
+        )
+        self.work_coin_gain_animation.stop()
+        self.work_coin_gain_label.setText(f"金币 +{amount}")
+        self.work_coin_gain_opacity.setOpacity(1.0)
+        self.work_coin_gain_label.move(start_position)
+        self.work_coin_gain_label.show()
+        self.work_coin_gain_label.raise_()
+        self.work_coin_gain_move_animation.setStartValue(start_position)
+        self.work_coin_gain_move_animation.setEndValue(end_position)
+        self.work_coin_gain_animation.start()
+
+    def reset_work_coin_gain_animation(self):
+        self.work_coin_gain_animation.stop()
+        self.work_coin_gain_label.hide()
+        self.work_coin_gain_next_on_left = True
 
     def eventFilter(
         self,

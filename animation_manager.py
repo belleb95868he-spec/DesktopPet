@@ -17,7 +17,8 @@ WORK_DURATION_MS = 2 * 60 * 1000
 WORK_COOLDOWN_MS = 10 * 60 * 1000
 WORK_BLINK_INTERVAL_MS = 3000
 WORK_BLINK_FRAME_INTERVAL_MS = 100
-WORK_REWARD_COINS = 10
+WORK_REWARD_INTERVAL_MS = 10 * 1000
+WORK_REWARD_PER_INTERVAL = 10
 IDLE_ENTER_PROBABILITY = 0.20
 BLINK_ENTER_PROBABILITY = 0.40
 WALK_ENTER_PROBABILITY = 0.20
@@ -216,6 +217,13 @@ class AnimationManager:
         self.work_end_timer.setTimerType(Qt.PreciseTimer)
         self.work_end_timer.timeout.connect(self.finish_work)
 
+        self.work_reward_timer = QTimer(self.pet)
+        self.work_reward_timer.setInterval(WORK_REWARD_INTERVAL_MS)
+        self.work_reward_timer.setTimerType(Qt.PreciseTimer)
+        self.work_reward_timer.timeout.connect(
+            self.claim_work_interval_rewards
+        )
+
         self.work_blink_interval_timer = QTimer(self.pet)
         self.work_blink_interval_timer.setInterval(
             WORK_BLINK_INTERVAL_MS
@@ -237,7 +245,7 @@ class AnimationManager:
         self.work_entry_available = True
         self.idle_cycles_before_actions = 0
         self.work_started_at = None
-        self.work_reward_claimed = False
+        self.work_reward_intervals_claimed = 0
         self.work_cooldown_until = 0.0
         self.hungry_index = 0
         self.hungry_loops_remaining = 0
@@ -863,7 +871,9 @@ class AnimationManager:
         self.work_blink_frame_index = 0
         self.work_blink_playing = False
         self.work_started_at = time.monotonic()
-        self.work_reward_claimed = False
+        self.work_reward_intervals_claimed = 0
+        if hasattr(self.pet, "reset_work_coin_gain_animation"):
+            self.pet.reset_work_coin_gain_animation()
         self.pet.pet_label.setPixmap(self.work_frame)
         self.pet.status_manager.update_ui()
         self.pet.collapse_status_panel_for_work()
@@ -872,8 +882,35 @@ class AnimationManager:
             self.pet.dialogue_manager.hide_message()
 
         self.work_end_timer.start(WORK_DURATION_MS)
+        self.work_reward_timer.start()
         self.work_blink_interval_timer.start()
         return True
+
+    def claim_work_interval_rewards(self):
+        """Immediately pay each completed 10-second unit of work."""
+        if self.current_state != "work" or self.work_started_at is None:
+            return 0
+        elapsed_ms = min(
+            WORK_DURATION_MS,
+            (time.monotonic() - self.work_started_at) * 1000,
+        )
+        completed_intervals = int(
+            elapsed_ms // WORK_REWARD_INTERVAL_MS
+        )
+        newly_completed = max(
+            0,
+            completed_intervals - self.work_reward_intervals_claimed,
+        )
+        for _ in range(newly_completed):
+            self.pet.status_manager.add_coins(
+                WORK_REWARD_PER_INTERVAL
+            )
+            if hasattr(self.pet, "show_work_coin_gain"):
+                self.pet.show_work_coin_gain(
+                    WORK_REWARD_PER_INTERVAL
+                )
+            self.work_reward_intervals_claimed += 1
+        return newly_completed
 
     def start_work_blink(self):
         if (
@@ -922,13 +959,10 @@ class AnimationManager:
         if elapsed_ms < WORK_DURATION_MS:
             return False
 
-        if not self.work_reward_claimed:
-            self.work_reward_claimed = True
-            self.pet.status_manager.add_coins(
-                WORK_REWARD_COINS
-            )
+        self.claim_work_interval_rewards()
 
         self.work_end_timer.stop()
+        self.work_reward_timer.stop()
         self.work_blink_interval_timer.stop()
         self.work_blink_frame_timer.stop()
         self.work_blink_frame_index = 0
@@ -950,17 +984,19 @@ class AnimationManager:
         return True
 
     def cancel_work(self):
-        """Manually leave work without granting the completion reward."""
+        """Leave work while retaining rewards from completed 10-second units."""
         if self.current_state != "work":
             return False
 
         self.work_end_timer.stop()
+        self.claim_work_interval_rewards()
+        self.work_reward_timer.stop()
         self.work_blink_interval_timer.stop()
         self.work_blink_frame_timer.stop()
         self.work_blink_frame_index = 0
         self.work_blink_playing = False
         self.work_started_at = None
-        self.work_reward_claimed = False
+        self.work_reward_intervals_claimed = 0
         self.work_cooldown_until = (
             time.monotonic() + WORK_COOLDOWN_MS / 1000
         )
